@@ -13,6 +13,8 @@ from slicer.ScriptedLoadableModule import (
 
 logger = logging.getLogger(__name__)
 
+SERVICE = "ImpactDoseAcc"
+
 from qt import (
     QTabWidget,
     QWidget,

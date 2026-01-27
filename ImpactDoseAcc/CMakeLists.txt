@@ -2,9 +2,20 @@
 set(MODULE_NAME ImpactDoseAcc)
 
 #-----------------------------------------------------------------------------
+set(MODULE_PYTHON_SCRIPTS
+  ${MODULE_NAME}.py
+  )
+
+
 set(MODULE_PYTHON_RESOURCES
+  Resources/UI/${MODULE_NAME}Core.ui
+  Resources/UI/${MODULE_NAME}AppTemplate.ui
+  Resources/UI/${MODULE_NAME}MetricsPanel.ui
+  
   Resources/Icons/${MODULE_NAME}.png
   )
+  
+
 
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
