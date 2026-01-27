@@ -296,7 +296,7 @@ class DoseAccumulationWidget(QWidget):
         self._refresh_fraction_list()
 
     def _generate_default_output_name(self) -> str:
-        return f"dose_accum_{uuid4().hex[:6]}"
+        return f"session_{uuid4().hex[:2]}"
 
     def _line_edit_text(self, line_edit) -> str:
         if line_edit is None:
@@ -359,6 +359,31 @@ class DoseAccumulationWidget(QWidget):
         except Exception:
             return ""
         return s[len("dose_list_") :] if s.startswith("dose_list_") else ""
+
+    def _find_uncertainty_node(self, base: str):
+        """Find the uncertainty volume corresponding to a Phase-1 output base.
+
+        Historically, Phase 1 may create uncertainty nodes as `uncertainty_{base}` or
+        `uncertainty_dose_{base}`. Phase 2 should accept both.
+        """
+        if slicer.mrmlScene is None:
+            return None
+        try:
+            b = str(base or "").strip()
+        except Exception:
+            b = ""
+        if not b:
+            return None
+
+        candidates = (f"uncertainty_{b}", f"uncertainty_dose_{b}")
+        for name in candidates:
+            try:
+                n = slicer.mrmlScene.GetFirstNodeByName(name)
+            except Exception:
+                n = None
+            if n is not None:
+                return n
+        return None
 
     def _clip(self, x: float, lo: float, hi: float) -> float:
         try:
@@ -714,10 +739,7 @@ class DoseAccumulationWidget(QWidget):
                 base = self._base_name_from_dose_list(self._safe_node_name(node))
                 if not base or slicer.mrmlScene is None:
                     continue
-                try:
-                    unc_node = slicer.mrmlScene.GetFirstNodeByName(f"uncertainty_{base}")
-                except Exception:
-                    unc_node = None
+                unc_node = self._find_uncertainty_node(base)
                 if unc_node is not None:
                     eligible_n += 1
 
@@ -832,11 +854,7 @@ class DoseAccumulationWidget(QWidget):
                 base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
                 if not base:
                     continue
-                unc_node = None
-                try:
-                    unc_node = slicer.mrmlScene.GetFirstNodeByName(f"uncertainty_{base}")
-                except Exception:
-                    unc_node = None
+                unc_node = self._find_uncertainty_node(base)
                 if unc_node is None:
                     continue
                 eval_map[("unc", base)] = unc_node
@@ -1106,7 +1124,7 @@ class DoseAccumulationWidget(QWidget):
 
                             j2["n_var_contrib"] = int(j2.get("n_var_contrib", 0)) + 1
                         except Exception:
-                            logger.warning(f"Could not read uncertainty volume: uncertainty_{base}")
+                            logger.warning(f"Could not read uncertainty volume for base: {base}")
 
                 j2["sum_w"] = float(j2.get("sum_w", 0.0)) + w
                 j2["used"] = int(j2.get("used", 0)) + 1

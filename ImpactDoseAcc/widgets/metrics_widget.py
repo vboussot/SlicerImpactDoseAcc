@@ -1,6 +1,8 @@
-import logging
+import os
 import threading
 from uuid import uuid4
+from typing import Optional
+import inspect
 
 import numpy as np
 import slicer
@@ -21,8 +23,65 @@ from qt import (
     QProgressBar,
     QTimer,
 )
+import logging
+import sys
 
-logger = logging.getLogger(__name__)
+
+
+
+logging.basicConfig(
+    level=(logging.DEBUG),   # DEBUG | INFO | WARNING
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
+logging.getLogger("pymedphys").setLevel(logging.DEBUG)
+logging.getLogger("pymedphys.gamma").setLevel(logging.DEBUG)
+
+
+def _available_memory_bytes() -> Optional[int]:
+    """Return available system memory in bytes.
+
+    Tries psutil first (if present), then falls back to Linux /proc/meminfo.
+    """
+    try:
+        import psutil  # type: ignore
+
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        pass
+
+    # Linux fallback
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if not line.startswith("MemAvailable:"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    kb = int(parts[1])
+                    return kb * 1024
+    except Exception:
+        pass
+
+    return None
+
+
+def _ram_available_bytes(fraction: float = 0.8) -> Optional[int]:
+    """Compute ram_available for pymedphys.gamma in bytes as fraction of free memory."""
+    try:
+        frac = float(fraction)
+    except Exception:
+        frac = 0.8
+    frac = max(0.0, min(1.0, frac))
+
+    avail_b = _available_memory_bytes()
+    if avail_b is None:
+        return None
+    try:
+        return int(frac * float(avail_b))
+    except Exception:
+        return None
 
 class MetricsEvaluationWidget(QWidget):
     """UI widget for Phase 3: Metrics & Evaluation."""
@@ -125,6 +184,7 @@ class MetricsEvaluationWidget(QWidget):
         ):
             cb.setChecked(True)
             metrics_layout.addWidget(cb)
+
 
         # Gamma can be expensive: keep it off by default.
         try:
@@ -384,8 +444,12 @@ class MetricsEvaluationWidget(QWidget):
         except Exception:
             volumes = []
 
-        # Reference dose: any volume with "dose" in the name.
-        dose_nodes_ref = [n for n in volumes if n is not None and self._is_name_match(n, "dose")]
+        # Reference dose: dose volumes, excluding uncertainty volumes.
+        dose_nodes_ref = [
+            n
+            for n in volumes
+            if n is not None and self._is_name_match(n, "dose") and not self._is_name_match(n, "uncertainty")
+        ]
         # Output dose: exclude uncertainty volumes that often contain "dose" in their name.
         dose_nodes_out = [
             n
@@ -570,7 +634,12 @@ class MetricsEvaluationWidget(QWidget):
 
     def _set_ui_busy(self, busy: bool) -> None:
         try:
-            self.run_btn.setEnabled(not bool(busy))
+            # Keep run button enabled while busy so it can act as a Stop button.
+            self.run_btn.setEnabled(True)
+            try:
+                self.run_btn.setText("Stop" if bool(busy) else "Compute metrics")
+            except Exception:
+                pass
         except Exception:
             pass
         try:
@@ -805,13 +874,13 @@ class MetricsEvaluationWidget(QWidget):
 
         _poll()
 
-    def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
+    def _run_cli_async(self, cli_module, params: dict, on_done, on_error):
         """Run a Slicer CLI without blocking the UI."""
         try:
             cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
         except Exception as exc:
             on_error(exc)
-            return
+            return None
 
         holder = {"tag": None, "handled": False}
 
@@ -897,6 +966,35 @@ class MetricsEvaluationWidget(QWidget):
         except Exception as exc:
             _cleanup()
             on_error(exc)
+            return None
+
+        return cli_node
+
+    def _cancel_active_job(self) -> None:
+        job = self._active_job
+        if job is None:
+            return
+        try:
+            job["cancelled"] = True
+        except Exception:
+            pass
+        self._set_status("Cancelling…")
+        self._set_progress(None, visible=True)
+
+        cli_node = None
+        try:
+            cli_node = job.get("_cli_node")
+        except Exception:
+            cli_node = None
+        if cli_node is not None:
+            try:
+                cancel_fn = getattr(slicer.cli, "cancel", None)
+                if callable(cancel_fn):
+                    cancel_fn(cli_node)
+                else:
+                    cli_node.Cancel()
+            except Exception:
+                pass
 
     def _finish_job(self, ok: bool, message: str = "") -> None:
         self._active_job = None
@@ -916,10 +1014,7 @@ class MetricsEvaluationWidget(QWidget):
     def _on_compute_metrics(self) -> None:
         # Avoid blocking the UI: run as an async job.
         if self._active_job is not None:
-            try:
-                QMessageBox.information(self, "Busy", "A metrics computation is already running.")
-            except Exception:
-                pass
+            self._cancel_active_job()
             return
 
         if slicer.mrmlScene is None:
@@ -973,6 +1068,8 @@ class MetricsEvaluationWidget(QWidget):
             "per_seg": {},
             "gamma_arr": None,
             "stage": "start",
+            "cancelled": False,
+            "_cli_node": None,
         }
 
         self._set_ui_busy(True)
@@ -991,25 +1088,44 @@ class MetricsEvaluationWidget(QWidget):
                     pass
 
         def _fail(msg: str):
+            job = self._active_job
+            if job is not None and bool(job.get("cancelled", False)):
+                _cleanup_temp_nodes()
+                self._finish_job(True, "Cancelled.")
+                return
             _cleanup_temp_nodes()
             self._finish_job(False, msg)
+
+        def _is_cancelled() -> bool:
+            j = self._active_job
+            if j is None:
+                return True
+            return bool(j.get("cancelled", False))
+
+        def _cancel_finish():
+            _cleanup_temp_nodes()
+            self._finish_job(True, "Cancelled.")
 
         def _step_after_resample():
             job = self._active_job
             if job is None:
+                return
+            if _is_cancelled():
+                _cancel_finish()
                 return
 
             self._set_status("Loading arrays…")
             self._set_progress(25, visible=True)
 
             try:
-                out_arr = slicer.util.arrayFromVolume(job["out_dose_node"]).astype(np.float64, copy=True)
-                ref_arr = slicer.util.arrayFromVolume(job["ref_eval_node"]).astype(np.float64, copy=True)
+                # Avoid forcing float64 + copies: this can double memory and slow things down.
+                # Gamma/metrics computations work fine with float32 in practice.
+                out_arr = np.asarray(slicer.util.arrayFromVolume(job["out_dose_node"]), dtype=np.float32)
+                ref_arr = np.asarray(slicer.util.arrayFromVolume(job["ref_eval_node"]), dtype=np.float32)
                 unc_arr = None
                 if job.get("unc_eval_node") is not None:
-                    unc_arr = slicer.util.arrayFromVolume(job["unc_eval_node"]).astype(np.float64, copy=True)
+                    unc_arr = np.asarray(slicer.util.arrayFromVolume(job["unc_eval_node"]), dtype=np.float32)
             except Exception as exc:
-                logger.exception("Failed to read volume arrays")
                 _fail(f"Failed to read arrays: {exc}")
                 return
 
@@ -1017,28 +1133,58 @@ class MetricsEvaluationWidget(QWidget):
             job["_ref_arr"] = ref_arr
             job["_unc_arr"] = unc_arr
 
-            # Pre-compute gamma ROI bbox on UI thread (uses MRML).
+            # Pre-compute ROI bbox on UI thread (uses MRML).
+            # Segmentation is mandatory for metrics, so computing this consistently is safe and
+            # keeps behavior stable if Gamma is toggled on/off between runs.
+            try:
+                distance_mm_threshold = float(self._float_from_line_edit(self.gamma_dist_mm_edit, 2.0))
+            except Exception:
+                distance_mm_threshold = 2.0
+            bbox = None
+            try:
+                bbox = self._segments_bbox(
+                    job["seg_node"],
+                    job.get("selected_seg_ids", []),
+                    job["out_dose_node"],
+                    margin_mm=float(distance_mm_threshold),
+                )
+            except Exception:
+                bbox = None
+            job["_gamma_bbox"] = bbox
+
+            # Pre-compute RAM budget for PyMedPhys (bytes). Keep it stable during one run.
+            job["_gamma_ram_available_bytes"] = _ram_available_bytes(0.8)
+            # Gamma params/import preflight only when Gamma is enabled.
             if self.cb_gamma_pr.isChecked():
-                # Preflight PyMedPhys import on UI thread. Installing packages from a worker thread can crash Slicer.
-                try:
-                    import pymedphys  # type: ignore  # noqa: F401
-                except Exception:
+                if job.get("_gamma_bbox") is None:
                     _fail(
-                        "PyMedPhys is not installed (needed for Gamma). "
-                        "Install it in Slicer Python (e.g. `slicer.util.pip_install('pymedphys')`) "
-                        "or disable Gamma_PR.%"
+                        "Gamma requires a valid ROI bbox around the selected segments, but it could not be computed. "
+                        "Check that selected segments intersect the output dose volume."
                     )
                     return
+
+                # Pre-compute gamma parameters on UI thread (avoid touching Qt widgets from worker thread).
                 try:
-                    distance_mm_threshold = float(self._float_from_line_edit(self.gamma_dist_mm_edit, 3.0))
+                    dose_percent_threshold = float(self._float_from_line_edit(self.gamma_dose_percent_edit, 2.0))
                 except Exception:
-                    distance_mm_threshold = 3.0
-                bbox = None
+                    dose_percent_threshold = 2.0
                 try:
-                    bbox = self._segments_bbox(job["seg_node"], job.get("selected_seg_ids", []), job["out_dose_node"], margin_mm=float(distance_mm_threshold))
+                    lower_percent_dose_cutoff = float(self._float_from_line_edit(self.gamma_low_cutoff_edit, 30.0))
                 except Exception:
-                    bbox = None
-                job["_gamma_bbox"] = bbox
+                    lower_percent_dose_cutoff = 30.0
+                try:
+                    local_gamma = bool(self._gamma_mode_is_local())
+                except Exception:
+                    local_gamma = False
+
+                job["_gamma_params"] = {
+                    "dose_percent_threshold": dose_percent_threshold,
+                    "distance_mm_threshold": distance_mm_threshold,
+                    "lower_percent_dose_cutoff": lower_percent_dose_cutoff,
+                    "local_gamma": local_gamma,
+                    "interp_fraction": 3,
+                    "max_gamma": 1,
+                }
 
             if self.cb_gamma_pr.isChecked():
                 self._set_status("Computing gamma (PyMedPhys)…")
@@ -1067,68 +1213,76 @@ class MetricsEvaluationWidget(QWidget):
                 _tick_gamma_progress()
 
                 def _gamma_fn():
-                    import pymedphys  # type: ignore
+                    import pymedphys
 
                     try:
                         sx, sy, sz = (float(v) for v in job["ref_eval_node"].GetSpacing())
                     except Exception:
-                        sx, sy, sz = (1.0, 1.0, 1.0)
-                    nz, ny, nx = job["_ref_arr"].shape
-                    z = np.arange(nz, dtype=np.float64) * sz
-                    y = np.arange(ny, dtype=np.float64) * sy
-                    x = np.arange(nx, dtype=np.float64) * sx
-                    axes = (z, y, x)
+                        sx, sy, sz = (2.0, 2.0, 2.0)
 
-                    dose_percent_threshold = float(self._float_from_line_edit(self.gamma_dose_percent_edit, 3.0))
-                    distance_mm_threshold = float(self._float_from_line_edit(self.gamma_dist_mm_edit, 3.0))
-                    lower_percent_dose_cutoff = float(self._float_from_line_edit(self.gamma_low_cutoff_edit, 10.0))
-                    local_gamma = bool(self._gamma_mode_is_local())
+                    params = job.get("_gamma_params") or {}
+                    dose_percent_threshold = float(params.get("dose_percent_threshold", 2.0))
+                    distance_mm_threshold = float(params.get("distance_mm_threshold", 2.0))
+                    lower_percent_dose_cutoff = float(params.get("lower_percent_dose_cutoff", 30.0))
+                    local_gamma = bool(params.get("local_gamma", False))
+                    interp_fraction = int(params.get("interp_fraction", 3))
+                    max_gamma = float(params.get("max_gamma", 1))
 
-                    bbox = job.get("_gamma_bbox", None)
-                    if bbox is not None:
-                        z0, z1, y0, y1, x0, x1 = bbox
-                        ref_crop = job["_ref_arr"][z0:z1, y0:y1, x0:x1]
-                        out_crop = job["_out_arr"][z0:z1, y0:y1, x0:x1]
-                        zc = axes[0][z0:z1]
-                        yc = axes[1][y0:y1]
-                        xc = axes[2][x0:x1]
-                        axes_crop = (zc, yc, xc)
-                        return pymedphys.gamma(
-                            axes_crop,
-                            ref_crop,
-                            axes_crop,
-                            out_crop,
-                            dose_percent_threshold=dose_percent_threshold,
-                            distance_mm_threshold=distance_mm_threshold,
-                            lower_percent_dose_cutoff=lower_percent_dose_cutoff,
-                            interp_fraction=3,
-                            max_gamma=1.5,
-                            local_gamma=local_gamma,
-                        )
+                    z0, z1, y0, y1, x0, x1 = job.get("_gamma_bbox")
+                    # Ensure contiguous crops for Numba kernels (can have a big perf impact).
+                    ref_crop = np.ascontiguousarray(job["_ref_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
+                    out_crop = np.ascontiguousarray(job["_out_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
+                    # Build only the cropped axes to reduce allocations.
+                    zc = (np.arange(z0, z1, dtype=np.float64) * sz)
+                    yc = (np.arange(y0, y1, dtype=np.float64) * sy)
+                    xc = (np.arange(x0, x1, dtype=np.float64) * sx)
+                    axes_crop = (zc, yc, xc)
+                    gamma_fn = pymedphys.gamma
 
-                    return pymedphys.gamma(
-                        axes,
-                        job["_ref_arr"],
-                        axes,
-                        job["_out_arr"],
-                        dose_percent_threshold=dose_percent_threshold,
-                        distance_mm_threshold=distance_mm_threshold,
-                        lower_percent_dose_cutoff=lower_percent_dose_cutoff,
-                        interp_fraction=3,
-                        max_gamma=1.5,
-                        local_gamma=local_gamma,
+                    kwargs = {
+                        "dose_percent_threshold": dose_percent_threshold,
+                        "distance_mm_threshold": distance_mm_threshold,
+                        "lower_percent_dose_cutoff": lower_percent_dose_cutoff,
+                        "interp_fraction": interp_fraction,
+                        "max_gamma": max_gamma,
+                        "local_gamma": local_gamma,
+                        "skip_once_passed": True,
+                        "ram_available": job.get("_gamma_ram_available_bytes"),
+                    }
+
+                    # Match the faster in-script defaults when available.
+                    try:
+                        sig = inspect.signature(gamma_fn)
+                        if "interp_algo" in sig.parameters:
+                            kwargs["interp_algo"] = "pymedphys"
+                        if "quiet" in sig.parameters:
+                            kwargs["quiet"] = True
+                    except Exception:
+                        pass
+
+                    return gamma_fn(
+                        axes_crop,
+                        ref_crop,
+                        axes_crop,
+                        out_crop,
+                        **kwargs,
                     )
 
                 def _gamma_done(gamma_arr):
                     job2 = self._active_job
                     if job2 is None:
                         return
+                    if _is_cancelled():
+                        _cancel_finish()
+                        return
                     job2["gamma_arr"] = gamma_arr
                     self._set_progress(40, visible=True)
                     _start_per_segment_loop()
 
                 def _gamma_err(exc):
-                    logger.exception("Gamma computation failed")
+                    if _is_cancelled():
+                        _cancel_finish()
+                        return
                     _fail(f"Gamma failed: {exc}")
 
                 self._run_in_thread(_gamma_fn, _gamma_done, _gamma_err, poll_ms=150)
@@ -1139,17 +1293,226 @@ class MetricsEvaluationWidget(QWidget):
             job = self._active_job
             if job is None:
                 return
+            if _is_cancelled():
+                _cancel_finish()
+                return
 
-            seg_ids = job.get("selected_seg_ids", [])
+            seg_ids = list(job.get("selected_seg_ids", []))
             total = max(1, len(seg_ids))
             job["_seg_index"] = 0
 
             self._set_status("Computing per-segment metrics…")
             self._set_progress(40, visible=True)
 
+            # Fast path: export a single multi-label labelmap once (major speedup vs N exports).
+            label_arr = None
+            label_value_by_id = {}
+            seg = None
+            labelmap = None
+            try:
+                seg = job["seg_node"].GetSegmentation()
+            except Exception:
+                seg = None
+            try:
+                seg_logic = slicer.modules.segmentations.logic()
+                labelmap = slicer.mrmlScene.AddNewNodeByClass(
+                    "vtkMRMLLabelMapVolumeNode", f"tmp_metrics_{uuid4().hex[:6]}"
+                )
+                try:
+                    labelmap.SetHideFromEditors(1)
+                    labelmap.SetSelectable(0)
+                    labelmap.SetSaveWithScene(0)
+                except Exception:
+                    pass
+
+                seg_ids_vtk = vtk.vtkStringArray()
+                for sid in seg_ids:
+                    seg_ids_vtk.InsertNextValue(str(sid))
+                seg_logic.ExportSegmentsToLabelmapNode(job["seg_node"], seg_ids_vtk, labelmap, job["out_dose_node"])
+                label_arr = np.asarray(slicer.util.arrayFromVolume(labelmap))
+
+                for sid in seg_ids:
+                    lv = None
+                    try:
+                        seg_obj = seg.GetSegment(sid) if seg is not None else None
+                        if seg_obj is not None and hasattr(seg_obj, "GetLabelValue"):
+                            lv = int(seg_obj.GetLabelValue())
+                    except Exception:
+                        lv = None
+                    if lv is not None and lv > 0:
+                        label_value_by_id[sid] = lv
+            except Exception:
+                label_arr = None
+                label_value_by_id = {}
+            finally:
+                try:
+                    if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
+                        slicer.mrmlScene.RemoveNode(labelmap)
+                except Exception:
+                    pass
+
+            if label_arr is not None and label_value_by_id:
+                # Names are MRML access; keep on UI thread.
+                name_by_id = {}
+                for sid in seg_ids:
+                    nm = str(sid)
+                    try:
+                        seg_obj = seg.GetSegment(sid) if seg is not None else None
+                        nm = seg_obj.GetName() if seg_obj is not None else str(sid)
+                    except Exception:
+                        nm = str(sid)
+                    name_by_id[sid] = nm
+
+                do_mae = bool(self.cb_err_mae.isChecked())
+                do_unc = bool(job.get("_unc_arr") is not None and (self.cb_unc_mean.isChecked() or self.cb_dose_minmax_3sigma.isChecked()))
+                do_gamma = bool(self.cb_gamma_pr.isChecked() and job.get("gamma_arr") is not None and job.get("_gamma_bbox") is not None)
+
+                def _perseg_fn():
+                    if _is_cancelled():
+                        return {"__cancelled__": True}
+
+                    out_arr = job["_out_arr"]
+                    ref_arr = job["_ref_arr"]
+                    unc_arr = job.get("_unc_arr")
+
+                    label_vals = np.array([label_value_by_id[sid] for sid in seg_ids if sid in label_value_by_id], dtype=np.int64)
+                    if label_vals.size == 0:
+                        return {}
+                    label_vals = np.unique(label_vals)
+                    label_vals_sorted = np.sort(label_vals)
+
+                    labels = label_arr
+                    mask = labels > 0
+                    if not np.any(mask):
+                        return {}
+
+                    lbl_flat = labels[mask].astype(np.int64, copy=False)
+                    idx_in_sorted = np.searchsorted(label_vals_sorted, lbl_flat)
+                    keep = (
+                        (idx_in_sorted >= 0)
+                        & (idx_in_sorted < label_vals_sorted.size)
+                        & (label_vals_sorted[idx_in_sorted] == lbl_flat)
+                    )
+                    if not np.any(keep):
+                        return {}
+
+                    idx = idx_in_sorted[keep]
+                    out_vals = out_arr[mask][keep]
+
+                    counts = np.bincount(idx, minlength=label_vals_sorted.size).astype(np.int64)
+                    sum_out = np.bincount(idx, weights=out_vals, minlength=label_vals_sorted.size)
+                    sum_out2 = np.bincount(idx, weights=(out_vals * out_vals), minlength=label_vals_sorted.size)
+
+                    mean = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
+                    std = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
+                    nz = counts > 0
+                    mean[nz] = sum_out[nz] / counts[nz]
+                    var = (sum_out2[nz] / counts[nz]) - (mean[nz] ** 2)
+                    var = np.maximum(var, 0.0)
+                    std[nz] = np.sqrt(var)
+
+                    mae = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
+                    if do_mae:
+                        ref_vals = ref_arr[mask][keep]
+                        absdiff = np.abs(out_vals - ref_vals)
+                        sum_abs = np.bincount(idx, weights=absdiff, minlength=label_vals_sorted.size)
+                        mae[nz] = sum_abs[nz] / counts[nz]
+
+                    unc_mean = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
+                    if do_unc and unc_arr is not None:
+                        unc_vals = unc_arr[mask][keep]
+                        sum_unc = np.bincount(idx, weights=unc_vals, minlength=label_vals_sorted.size)
+                        unc_mean[nz] = sum_unc[nz] / counts[nz]
+
+                    gamma_pr = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
+                    if do_gamma:
+                        try:
+                            g = job["gamma_arr"]
+                            z0, z1, y0, y1, x0, x1 = job.get("_gamma_bbox")
+                            lab_crop = labels[z0:z1, y0:y1, x0:x1]
+                            valid = (lab_crop > 0) & np.isfinite(g)
+                            if np.any(valid):
+                                lbl_v = lab_crop[valid].astype(np.int64, copy=False)
+                                idx2 = np.searchsorted(label_vals_sorted, lbl_v)
+                                keep2 = (
+                                    (idx2 >= 0)
+                                    & (idx2 < label_vals_sorted.size)
+                                    & (label_vals_sorted[idx2] == lbl_v)
+                                )
+                                if np.any(keep2):
+                                    idx2 = idx2[keep2]
+                                    denom = np.bincount(idx2, minlength=label_vals_sorted.size).astype(np.int64)
+                                    passed_mask = (g[valid][keep2] <= 1.0)
+                                    passed = np.bincount(
+                                        idx2, weights=passed_mask.astype(np.int64), minlength=label_vals_sorted.size
+                                    )
+                                    dnz = denom > 0
+                                    gamma_pr[dnz] = 100.0 * (passed[dnz] / denom[dnz])
+                        except Exception:
+                            pass
+
+                    label_to_index = {int(v): int(i) for i, v in enumerate(label_vals_sorted)}
+                    out = {}
+                    for sid in seg_ids:
+                        lv = label_value_by_id.get(sid)
+                        nm = name_by_id.get(sid, str(sid))
+                        if lv is None:
+                            out[sid] = {
+                                "name": nm,
+                                "mean": np.nan,
+                                "std": np.nan,
+                                "mae": np.nan,
+                                "unc_mean": np.nan,
+                                "gamma_pr": np.nan,
+                            }
+                            continue
+                        j = label_to_index.get(int(lv))
+                        if j is None or counts[j] <= 0:
+                            out[sid] = {
+                                "name": nm,
+                                "mean": np.nan,
+                                "std": np.nan,
+                                "mae": np.nan,
+                                "unc_mean": np.nan,
+                                "gamma_pr": np.nan,
+                            }
+                        else:
+                            out[sid] = {
+                                "name": nm,
+                                "mean": float(mean[j]),
+                                "std": float(std[j]),
+                                "mae": float(mae[j]) if np.isfinite(mae[j]) else np.nan,
+                                "unc_mean": float(unc_mean[j]) if np.isfinite(unc_mean[j]) else np.nan,
+                                "gamma_pr": float(gamma_pr[j]) if np.isfinite(gamma_pr[j]) else np.nan,
+                            }
+                    return out
+
+                def _perseg_done(per_seg_dict):
+                    job2 = self._active_job
+                    if job2 is None:
+                        return
+                    if _is_cancelled() or (isinstance(per_seg_dict, dict) and per_seg_dict.get("__cancelled__")):
+                        _cancel_finish()
+                        return
+                    job2["per_seg"] = per_seg_dict or {}
+                    self._set_progress(90, visible=True)
+                    _build_table_and_finish()
+
+                def _perseg_err(exc):
+                    if _is_cancelled():
+                        _cancel_finish()
+                        return
+                    _fail(f"Per-segment computation failed: {exc}")
+
+                self._run_in_thread(_perseg_fn, _perseg_done, _perseg_err, poll_ms=150)
+                return
+
             def _one_segment():
                 job2 = self._active_job
                 if job2 is None:
+                    return
+                if _is_cancelled():
+                    _cancel_finish()
                     return
                 i = int(job2.get("_seg_index", 0))
                 if i >= len(seg_ids):
@@ -1192,7 +1555,8 @@ class MetricsEvaluationWidget(QWidget):
 
                     mae = np.nan
                     if self.cb_err_mae.isChecked():
-                        mae = float(np.mean(np.abs(job2["_out_arr"][mask] - job2["_ref_arr"][mask])))
+                        ref_vals = job2["_ref_arr"][mask]
+                        mae = float(np.mean(np.abs(out_vals - ref_vals)))
 
                     unc_mean = np.nan
                     if job2.get("_unc_arr") is not None:
@@ -1202,12 +1566,8 @@ class MetricsEvaluationWidget(QWidget):
                     if job2.get("gamma_arr") is not None:
                         try:
                             g = job2["gamma_arr"]
-                            bbox = job2.get("_gamma_bbox", None)
-                            if bbox is not None:
-                                z0, z1, y0, y1, x0, x1 = bbox
-                                m = mask[z0:z1, y0:y1, x0:x1]
-                            else:
-                                m = mask
+                            z0, z1, y0, y1, x0, x1 = job2.get("_gamma_bbox")
+                            m = mask[z0:z1, y0:y1, x0:x1]
                             valid = m & np.isfinite(g)
                             denom = int(np.count_nonzero(valid))
                             if denom > 0:
@@ -1244,6 +1604,9 @@ class MetricsEvaluationWidget(QWidget):
         def _build_table_and_finish():
             job = self._active_job
             if job is None:
+                return
+            if _is_cancelled():
+                _cancel_finish()
                 return
             self._set_status("Building table…")
             self._set_progress(95, visible=True)
@@ -1332,6 +1695,9 @@ class MetricsEvaluationWidget(QWidget):
             job = self._active_job
             if job is None:
                 return
+            if _is_cancelled():
+                _cancel_finish()
+                return
             needs = False
             try:
                 needs = self._needs_resample_to_reference(job["ref_dose_node"], job["out_dose_node"])
@@ -1364,14 +1730,16 @@ class MetricsEvaluationWidget(QWidget):
                 _start_resample_unc()
 
             def _err(exc):
-                logger.exception("Reference resample failed")
                 _fail(f"Reference resample failed: {exc}")
 
-            self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
+            job["_cli_node"] = self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
 
         def _start_resample_unc():
             job = self._active_job
             if job is None:
+                return
+            if _is_cancelled():
+                _cancel_finish()
                 return
             if job.get("unc_node") is None:
                 _step_after_resample()
@@ -1408,10 +1776,9 @@ class MetricsEvaluationWidget(QWidget):
                 _step_after_resample()
 
             def _err(exc):
-                logger.exception("Uncertainty resample failed")
                 _fail(f"Uncertainty resample failed: {exc}")
 
-            self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
+            job["_cli_node"] = self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
 
         try:
             QTimer.singleShot(0, _start_resample_ref)

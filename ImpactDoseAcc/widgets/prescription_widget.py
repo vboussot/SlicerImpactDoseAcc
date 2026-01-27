@@ -29,10 +29,12 @@ class DvfSelectorRow(QWidget):
     Supports native TransformNodes and transform sequences.
     """
 
-    def __init__(self):
+    def __init__(self, on_add=None, on_remove=None):
         super().__init__()
         self._dvf_node = None
         self._dvf_node_map = {}
+        self._on_add = on_add
+        self._on_remove = on_remove
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -42,8 +44,43 @@ class DvfSelectorRow(QWidget):
         self.dvf_combo.currentIndexChanged.connect(self._on_dvf_changed)
         layout.addWidget(dvf_label)
         layout.addWidget(self.dvf_combo, 1)
+
+        self._add_btn = QPushButton("+")
+        self._add_btn.setMaximumWidth(28)
+        self._add_btn.setToolTip("Add DVF")
+        self._add_btn.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self._add_btn)
+
+        self._remove_btn = QPushButton("-")
+        self._remove_btn.setMaximumWidth(28)
+        self._remove_btn.setToolTip("Remove DVF")
+        self._remove_btn.clicked.connect(self._on_remove_clicked)
+        layout.addWidget(self._remove_btn)
+
         self.setLayout(layout)
         self._populate_dvf_options()
+
+    def _on_add_clicked(self) -> None:
+        try:
+            if callable(self._on_add):
+                self._on_add()
+        except Exception:
+            pass
+
+    def _on_remove_clicked(self) -> None:
+        # Avoid deleting Qt objects in the middle of the clicked() callback.
+        try:
+            if not callable(self._on_remove):
+                return
+            try:
+                def _do_remove():
+                    self._on_remove(self)
+
+                QTimer.singleShot(0, _do_remove)
+            except Exception:
+                self._on_remove(self)
+        except Exception:
+            pass
 
     def _populate_dvf_options(self) -> None:
         self.dvf_combo.clear()
@@ -138,20 +175,59 @@ class DoseSelectorRow(QWidget):
     Multiple rows can be added to select multiple doses.
     """
 
-    def __init__(self, is_rtdose_cb):
+    def __init__(self, is_rtdose_cb, on_add=None, on_remove=None):
         super().__init__()
         self._is_rtdose = is_rtdose_cb
         self._dose_node = None
         self._dose_node_map = {}
+        self._on_add = on_add
+        self._on_remove = on_remove
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout()
+        dose_label = QLabel("Dose:")
         self.dose_combo = QComboBox()
         self.dose_combo.currentIndexChanged.connect(self._on_dose_changed)
+        layout.addWidget(dose_label)
         layout.addWidget(self.dose_combo, 1)
+
+        self._add_btn = QPushButton("+")
+        self._add_btn.setMaximumWidth(28)
+        self._add_btn.setToolTip("Add dose")
+        self._add_btn.clicked.connect(self._on_add_clicked)
+        layout.addWidget(self._add_btn)
+
+        self._remove_btn = QPushButton("-")
+        self._remove_btn.setMaximumWidth(28)
+        self._remove_btn.setToolTip("Remove dose")
+        self._remove_btn.clicked.connect(self._on_remove_clicked)
+        layout.addWidget(self._remove_btn)
+
         self.setLayout(layout)
         self.refresh_options()
+
+    def _on_add_clicked(self) -> None:
+        try:
+            if callable(self._on_add):
+                self._on_add()
+        except Exception:
+            pass
+
+    def _on_remove_clicked(self) -> None:
+        # Avoid deleting Qt objects in the middle of the clicked() callback.
+        try:
+            if not callable(self._on_remove):
+                return
+            try:
+                def _do_remove():
+                    self._on_remove(self)
+
+                QTimer.singleShot(0, _do_remove)
+            except Exception:
+                self._on_remove(self)
+        except Exception:
+            pass
 
     def refresh_options(self) -> None:
         self.dose_combo.clear()
@@ -165,6 +241,12 @@ class DoseSelectorRow(QWidget):
         volume_nodes = slicer.util.getNodes("vtkMRMLScalarVolumeNode*")
         combo_index = 1
         for node_name, node in volume_nodes.items():
+            try:
+                name_l = str(node_name or "").lower()
+            except Exception:
+                name_l = ""
+            if "uncertainty" in name_l or "dvf_magnitude" in name_l:
+                continue
             try:
                 if not self._is_rtdose(node):
                     continue
@@ -309,14 +391,6 @@ class PrescriptionDoseEstimationWidget(QWidget):
         self.sessions_container = QWidget()
         self.sessions_container_layout = QVBoxLayout(self.sessions_container)
         # Multiple dose selection (all DVFs will be applied to each selected dose)
-        doses_header = QHBoxLayout()
-        doses_header.addWidget(QLabel("Doses:"))
-        doses_header.addStretch()
-        add_dose_btn = QPushButton("+ Add Dose")
-        add_dose_btn.clicked.connect(self._add_dose_selector)
-        doses_header.addWidget(add_dose_btn)
-        self.sessions_container_layout.addLayout(doses_header)
-
         self.dose_rows_container = QWidget()
         self.dose_rows_layout = QVBoxLayout(self.dose_rows_container)
         self.sessions_container_layout.addWidget(self.dose_rows_container)
@@ -325,10 +399,11 @@ class PrescriptionDoseEstimationWidget(QWidget):
         self._add_dose_selector()
 
         # DVF samples
-        add_session_btn = QPushButton("+ Add DVF")
-        add_session_btn.clicked.connect(self._add_session_selector)
-        self._add_dvf_btn = add_session_btn
-        self.sessions_container_layout.addWidget(add_session_btn)
+        self.dvf_rows_container = QWidget()
+        self.dvf_rows_layout = QVBoxLayout(self.dvf_rows_container)
+        self.sessions_container_layout.addWidget(self.dvf_rows_container)
+
+        self._session_widgets = []
         self._add_session_selector()
         self.sessions_container_layout.addStretch()
         self.sessions_scroll.setWidget(self.sessions_container)
@@ -434,6 +509,18 @@ class PrescriptionDoseEstimationWidget(QWidget):
 
     def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
         """Run a Slicer CLI without blocking the UI."""
+        if cli_module is None:
+            try:
+                on_error(RuntimeError("CLI module is not available"))
+            except Exception:
+                pass
+            return
+        if not hasattr(slicer, "cli") or slicer.cli is None:
+            try:
+                on_error(RuntimeError("Slicer CLI interface is not available"))
+            except Exception:
+                pass
+            return
         try:
             cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
         except Exception as exc:
@@ -540,25 +627,74 @@ class PrescriptionDoseEstimationWidget(QWidget):
             on_error(exc)
 
     def _add_session_selector(self) -> None:
-        row_widget = DvfSelectorRow()
+        row_widget = DvfSelectorRow(on_add=self._add_session_selector, on_remove=self._remove_session_selector)
         self._session_widgets.append(row_widget)
-        # Insert DVF rows after the dose row and before the "+ Add DVF" button.
-        add_btn = getattr(self, "_add_dvf_btn", None)
-        if add_btn is not None and hasattr(self.sessions_container_layout, "indexOf"):
-            idx = self.sessions_container_layout.indexOf(add_btn)
-            if idx is not None and idx >= 0:
-                self.sessions_container_layout.insertWidget(idx, row_widget)
-                return
+        if hasattr(self, "dvf_rows_layout"):
+            self.dvf_rows_layout.insertWidget(len(self._session_widgets) - 1, row_widget)
 
-        # Fallback: assume dose row is the first layout item.
-        insert_index = 1 + (len(self._session_widgets) - 1)
-        self.sessions_container_layout.insertWidget(insert_index, row_widget)
+    def _remove_session_selector(self, row_widget) -> None:
+        try:
+            if row_widget not in self._session_widgets:
+                return
+            # Keep at least one row.
+            if len(self._session_widgets) <= 1:
+                try:
+                    row_widget.dvf_combo.setCurrentIndex(0)
+                except Exception:
+                    pass
+                return
+            self._session_widgets.remove(row_widget)
+            try:
+                if hasattr(self, "dvf_rows_layout"):
+                    self.dvf_rows_layout.removeWidget(row_widget)
+            except Exception:
+                pass
+            try:
+                row_widget.hide()
+                row_widget.setEnabled(False)
+            except Exception:
+                pass
+            try:
+                QTimer.singleShot(0, row_widget.deleteLater)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _add_dose_selector(self) -> None:
-        row_widget = DoseSelectorRow(self._is_rtdose)
+        row_widget = DoseSelectorRow(self._is_rtdose, on_add=self._add_dose_selector, on_remove=self._remove_dose_selector)
         self._dose_widgets.append(row_widget)
         if hasattr(self, "dose_rows_layout"):
             self.dose_rows_layout.insertWidget(len(self._dose_widgets) - 1, row_widget)
+
+    def _remove_dose_selector(self, row_widget) -> None:
+        try:
+            if row_widget not in self._dose_widgets:
+                return
+            # Keep at least one row.
+            if len(self._dose_widgets) <= 1:
+                try:
+                    row_widget.dose_combo.setCurrentIndex(0)
+                except Exception:
+                    pass
+                return
+            self._dose_widgets.remove(row_widget)
+            try:
+                if hasattr(self, "dose_rows_layout"):
+                    self.dose_rows_layout.removeWidget(row_widget)
+            except Exception:
+                pass
+            try:
+                row_widget.hide()
+                row_widget.setEnabled(False)
+            except Exception:
+                pass
+            try:
+                QTimer.singleShot(0, row_widget.deleteLater)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _refresh_tps_lists(self) -> None:
         self._populate_reference_ct_combo()
@@ -1246,6 +1382,14 @@ class PrescriptionDoseEstimationWidget(QWidget):
                 pass
             return
 
+        # Temporarily silence noisy VTK warnings during the deformation pipeline.
+        prev_warn = None
+        try:
+            prev_warn = vtk.vtkObject.GetGlobalWarningDisplay()
+            vtk.vtkObject.SetGlobalWarningDisplay(0)
+        except Exception:
+            prev_warn = None
+
         output_name_val = self._line_edit_text(self.output_name_edit)
 
         base_name = output_name_val.strip() 
@@ -1294,6 +1438,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
             "sumsq_arr": None,
             "min_arr": None,
             "max_arr": None,
+            "vtk_warn_prev": prev_warn,
         }
 
         # Build a sequential task list (dose x DVF x frame).
@@ -1339,6 +1484,12 @@ class PrescriptionDoseEstimationWidget(QWidget):
         def _fail(msg: str):
             logger.error(str(msg))
             _cleanup_temp_nodes()
+            try:
+                prev = job.get("vtk_warn_prev", None)
+                if prev is not None:
+                    vtk.vtkObject.SetGlobalWarningDisplay(prev)
+            except Exception:
+                pass
             self._finish_job(False, msg)
 
         def _finalize():
@@ -1450,6 +1601,13 @@ class PrescriptionDoseEstimationWidget(QWidget):
             except Exception:
                 pass
             self._finish_job(True, "Done.")
+
+            try:
+                prev = job.get("vtk_warn_prev", None)
+                if prev is not None:
+                    vtk.vtkObject.SetGlobalWarningDisplay(prev)
+            except Exception:
+                pass
 
         def _tick():
             j = self._active_job
