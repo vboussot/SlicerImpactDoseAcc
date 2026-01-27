@@ -1,23 +1,12 @@
 from uuid import uuid4
 
+import io
 import numpy as np
+import os
 import slicer
 import vtk
-from qt import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QGroupBox,
-    QLabel,
-    QPushButton,
-    QWidget,
-    QCheckBox,
-    QComboBox,
-    QScrollArea,
-    QLineEdit,
-    QMessageBox,
-    QProgressBar,
-    QTimer,
-)
+from qt import QVBoxLayout, QWidget, QCheckBox, QMessageBox, QTimer
+
 
 class DVHWidget(QWidget):
     """UI widget for Phase 4: DVH.
@@ -39,138 +28,133 @@ class DVHWidget(QWidget):
         self._segment_checkbox_by_id = {}
         self._active_job = None
         self._plot_view_node = None
+        self._last_png_path = None
+        self._last_out_base = None
         self._setup_ui()
 
+    # Small UI helpers to reduce repetitive getattr/None checks
+    def _w(self, name):
+        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
+
+    def _layout(self, widget_name):
+        w = self._w(widget_name)
+        return w.layout() if w is not None and hasattr(w, "layout") else None
+
+    def _btn(self, name, cb):
+        btn = self._w(name)
+        if btn is not None and cb:
+            btn.clicked.connect(cb)
+        return btn
+
+    def _generate_default_output_name(self) -> str:
+        return f"dvh_{uuid4().hex[:6]}"
+
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout()
+        ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/DVHWidget.ui"))
+        ui_widget = slicer.util.loadUI(ui_path)
+        self.ui = slicer.util.childWidgetVariables(ui_widget)
+        self._root_widget = ui_widget
 
-        inputs_group = QGroupBox("1. Inputs")
-        inputs_layout = QVBoxLayout()
+        # Bind widgets
+        self.dose_combo_a = self._w("dose_combo_a")
+        self.dose_combo_b = self._w("dose_combo_b")
+        self.cb_unc_a = self._w("cb_unc_a")
+        self.cb_unc_b = self._w("cb_unc_b")
+        self.seg_selector = self._w("seg_selector")
+        self._segments_group = self._w("segments_group")
+        self._segments_scroll = self._w("segments_scroll")
+        self._segments_scroll_content = self._w("segments_scroll_content")
+        self._segments_scroll_layout = self._layout("segments_scroll_content")
+        self.output_name_edit = self._w("output_name_edit")
+        self.run_btn = self._w("run_btn")
+        self.status_label = self._w("status_label")
+        self.progress_bar = self._w("progress_bar")
+        self.plot_widget = self._w("plot_widget")
+        self.show_png_btn = self._w("show_png_btn")
+        self.legend_group = self._w("legend_group")
+        self.legend_label = self._w("legend_label")
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Select inputs for DVH:"))
-        header.addStretch()
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setMaximumWidth(40)
-        refresh_btn.setToolTip("Refresh lists")
-        refresh_btn.clicked.connect(self._refresh_dose_lists)
-        header.addWidget(refresh_btn)
-        inputs_layout.addLayout(header)
-   
-
-        dose_row_a = QHBoxLayout()
-        dose_row_a.addWidget(QLabel("Dose ref:"))
-        self.dose_combo_a = QComboBox()
-        dose_row_a.addWidget(self.dose_combo_a, 1)
-        self.cb_unc_a = QCheckBox("Show uncertainty (±3σ)")
-        self.cb_unc_a.setChecked(False)
-        self.cb_unc_a.setEnabled(False)
-        dose_row_a.addWidget(self.cb_unc_a)
-        inputs_layout.addLayout(dose_row_a)
-
-        dose_row_b = QHBoxLayout()
-        dose_row_b.addWidget(QLabel("Dose estimated (optional):"))
-        self.dose_combo_b = QComboBox()
-        dose_row_b.addWidget(self.dose_combo_b, 1)
-        self.cb_unc_b = QCheckBox("Show uncertainty (±3σ)")
-        self.cb_unc_b.setChecked(False)
-        self.cb_unc_b.setEnabled(False)
-        dose_row_b.addWidget(self.cb_unc_b)
-        inputs_layout.addLayout(dose_row_b)
-
-        seg_row = QHBoxLayout()
-        seg_row.addWidget(QLabel("Segmentation:"))
-        self.seg_selector = slicer.qMRMLNodeComboBox()
-        self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
-        self.seg_selector.noneEnabled = True
-        self.seg_selector.addEnabled = False
-        self.seg_selector.removeEnabled = False
-        self.seg_selector.setMRMLScene(slicer.mrmlScene)
-        seg_row.addWidget(self.seg_selector, 1)
-        inputs_layout.addLayout(seg_row)
-
-        segments_group = QGroupBox("Segments to include")
-        segments_group_layout = QVBoxLayout()
-        self._segments_scroll = QScrollArea()
-        self._segments_scroll.setWidgetResizable(True)
-        self._segments_scroll_content = QWidget()
-        self._segments_scroll_layout = QVBoxLayout()
-        self._segments_scroll_content.setLayout(self._segments_scroll_layout)
-        self._segments_scroll.setWidget(self._segments_scroll_content)
-        segments_group_layout.addWidget(self._segments_scroll)
-        segments_group.setLayout(segments_group_layout)
-        inputs_layout.addWidget(segments_group)
-        self._segments_group = segments_group
-
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("Output base name:"))
-        self.output_name_edit = QLineEdit()
-        self.output_name_edit.setText(f"dvh_{uuid4().hex[:6]}")
-        out_row.addWidget(self.output_name_edit, 1)
-        inputs_layout.addLayout(out_row)
-
-        inputs_group.setLayout(inputs_layout)
-        layout.addWidget(inputs_group)
-
-        self.run_btn = QPushButton("Compute DVH")
-        self.run_btn.clicked.connect(self._on_compute_dvh)
-        layout.addWidget(self.run_btn)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
-        # Embedded plot widget (shows a PlotChartNode).
-        self.plot_widget = None
-        try:
-            self.plot_widget = slicer.qMRMLPlotWidget()
-            self.plot_widget.setMRMLScene(slicer.mrmlScene)
+        # Configure segmentation selector
+        if self.seg_selector is not None:
             try:
+                self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
+                self.seg_selector.noneEnabled = True
+                self.seg_selector.addEnabled = False
+                self.seg_selector.removeEnabled = False
+                self.seg_selector.setMRMLScene(slicer.mrmlScene)
+            except Exception:
+                pass
+
+        # Buttons & signals
+        self._btn("refresh_btn", self._refresh_dose_lists)
+        if self.run_btn is not None:
+            try:
+                self.run_btn.clicked.connect(self._on_compute_dvh)
+            except Exception:
+                pass
+        self._btn("show_png_btn", self._on_show_png)
+        try:
+            if self.seg_selector is not None:
+                self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
+        except Exception:
+            pass
+        try:
+            if self.dose_combo_a is not None:
+                self.dose_combo_a.currentIndexChanged.connect(self._on_dose_selection_changed)
+            if self.dose_combo_b is not None:
+                self.dose_combo_b.currentIndexChanged.connect(self._on_dose_selection_changed)
+        except Exception:
+            pass
+
+        # Defaults
+        try:
+            if self.cb_unc_a is not None:
+                self.cb_unc_a.setChecked(False)
+                self.cb_unc_a.setEnabled(False)
+            if self.cb_unc_b is not None:
+                self.cb_unc_b.setChecked(False)
+                self.cb_unc_b.setEnabled(False)
+        except Exception:
+            pass
+        try:
+            if self.show_png_btn is not None:
+                self.show_png_btn.setEnabled(False)
+        except Exception:
+            pass
+
+        if self.output_name_edit is not None:
+            try:
+                self.output_name_edit.setText(self._generate_default_output_name())
+            except Exception:
+                pass
+
+        if self.progress_bar is not None:
+            try:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setVisible(False)
+            except Exception:
+                pass
+
+        # Embedded plot widget configuration
+        if self.plot_widget is not None:
+            try:
+                self.plot_widget.setMRMLScene(slicer.mrmlScene)
                 self.plot_widget.setMinimumHeight(260)
             except Exception:
                 pass
-            layout.addWidget(self.plot_widget)
-        except Exception:
-            self.plot_widget = None
+            try:
+                self._ensure_embedded_plot_view()
+            except Exception:
+                pass
 
-        # Ensure embedded plot has its own PlotViewNode (required for display in some Slicer versions)
-        try:
-            self._ensure_embedded_plot_view()
-        except Exception:
-            pass
-
-        # Custom legend (more controllable than PlotChart legend)
-        self.legend_group = QGroupBox("Legend")
-        legend_layout = QVBoxLayout()
-        self.legend_label = QLabel("")
-        self.legend_label.setWordWrap(True)
-        legend_layout.addWidget(self.legend_label)
-        self.legend_group.setLayout(legend_layout)
-        layout.addWidget(self.legend_group)
-
-        layout.addStretch()
+        layout = QVBoxLayout(self)
+        layout.addWidget(ui_widget)
         self.setLayout(layout)
 
-        try:
-            self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
-        except Exception:
-            pass
-        try:
-            self.dose_combo_a.currentIndexChanged.connect(self._on_dose_selection_changed)
-            self.dose_combo_b.currentIndexChanged.connect(self._on_dose_selection_changed)
-        except Exception:
-            pass
-
         self._refresh_dose_lists()
-        self._on_segmentation_changed(self.seg_selector.currentNode())
+        self._on_segmentation_changed(self.seg_selector.currentNode() if self.seg_selector is not None else None)
         self._on_dose_selection_changed()
-
         self._update_legend(structure_items=[], dose_scale=1.0)
 
     def _set_plot_chart_on_widget(self, chart_node) -> None:
@@ -310,7 +294,7 @@ class DVHWidget(QWidget):
 
             ci = (
                 "<div style='margin-top:6px;'>"
-                "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Incertitude (±3σ)</div>"
+                "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Uncertainty (±3σ)</div>"
                 "</div>"
             )
 
@@ -549,6 +533,81 @@ class DVHWidget(QWidget):
         except Exception:
             return []
 
+    def _on_show_png(self):
+        path = getattr(self, "_last_png_path", None)
+        if not path or not os.path.exists(path):
+            try:
+                QMessageBox.information(self, "DVH", "No PNG available yet.")
+            except Exception:
+                pass
+            return
+        name = "dvh_png"
+        try:
+            if self._last_out_base:
+                name = f"{self._last_out_base}_png"
+            elif self._active_job and self._active_job.get("out_base"):
+                name = f"{self._active_job.get('out_base')}_png"
+        except Exception:
+            pass
+        node = self._load_png_node(path, name)
+        if node is None:
+            return
+        try:
+            lm = slicer.app.layoutManager()
+            if lm is not None:
+                try:
+                    lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
+                except Exception:
+                    pass
+                for view_name in ("Red", "Yellow", "Green"):
+                    try:
+                        sw = lm.sliceWidget(view_name)
+                        if sw is None:
+                            continue
+                        comp = sw.sliceLogic().GetSliceCompositeNode()
+                        comp.SetBackgroundVolumeID(node.GetID())
+                    except Exception:
+                        pass
+                try:
+                    lm.resetSliceViews()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _load_png_node(self, path: str, name: str):
+        if slicer.mrmlScene is None or not path or not os.path.exists(path):
+            return None
+        try:
+            existing = slicer.mrmlScene.GetFirstNodeByName(name)
+        except Exception:
+            existing = None
+
+        if existing is not None and hasattr(existing, "IsA") and existing.IsA("vtkMRMLScalarVolumeNode"):
+            try:
+                storage = existing.GetStorageNode()
+            except Exception:
+                storage = None
+            if storage is not None:
+                try:
+                    storage.SetFileName(path)
+                    storage.ReadData(existing)
+                    return existing
+                except Exception:
+                    pass
+            # Fallback: remove and reload to avoid stale content
+            try:
+                if existing.GetScene() == slicer.mrmlScene:
+                    slicer.mrmlScene.RemoveNode(existing)
+            except Exception:
+                pass
+
+        try:
+            n = slicer.util.loadVolume(path, properties={"name": name})
+            return n
+        except Exception:
+            return None
+
     def _get_sh_node(self):
         if slicer.mrmlScene is None:
             return None
@@ -692,7 +751,7 @@ class DVHWidget(QWidget):
         if dose_vals is None or bins_edges_gy is None:
             return None, None
         try:
-            vals = np.asarray(dose_vals, dtype=np.float64)
+            vals = np.asarray(dose_vals, dtype=np.float32)
             vals = vals[np.isfinite(vals)]
         except Exception:
             return None, None
@@ -700,11 +759,11 @@ class DVHWidget(QWidget):
             return None, None
 
         hist, _ = np.histogram(vals, bins=bins_edges_gy)
-        cum = np.cumsum(hist[::-1])[::-1].astype(np.float64)
+        cum = np.cumsum(hist[::-1])[::-1].astype(np.float32)
         if cum.size == 0 or cum[0] <= 0:
             return None, None
-        vcc = cum * float(voxel_volume_cc)
-        vpct = 100.0 * cum / float(cum[0])
+        vcc = np.asarray(cum, dtype=np.float32) * float(voxel_volume_cc)
+        vpct = np.asarray(100.0 * cum / float(cum[0]), dtype=np.float32)
         return vpct, vcc
 
     def _on_compute_dvh(self) -> None:
@@ -754,6 +813,15 @@ class DVHWidget(QWidget):
             "seg_color_by_id": {},
         }
 
+        self._last_out_base = out_base
+
+        self._last_png_path = None
+        try:
+            if self.show_png_btn is not None:
+                self.show_png_btn.setEnabled(False)
+        except Exception:
+            pass
+
         self._set_ui_busy(True)
         self._set_status("Preparing…")
         self._set_progress(0, visible=True)
@@ -788,14 +856,14 @@ class DVHWidget(QWidget):
         dose_arrays = []
         dose_labels = []
         try:
-            dose_arrays.append(slicer.util.arrayFromVolume(dose_a).astype(np.float64, copy=False))
+            dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_a), dtype=np.float32))
             dose_labels.append("A")
         except Exception as exc:
             _fail(f"Failed to read dose A array: {exc}")
             return
         if dose_b is not None:
             try:
-                dose_arrays.append(slicer.util.arrayFromVolume(dose_b).astype(np.float64, copy=False))
+                dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_b), dtype=np.float32))
                 dose_labels.append("B")
             except Exception:
                 dose_b = None
@@ -882,11 +950,11 @@ class DVHWidget(QWidget):
         max_dose = float(max_dose_gy)
 
         bw = self._auto_bin_width_gy(max_dose)
-        edges = np.arange(0.0, float(max_dose) + float(bw), float(bw), dtype=np.float64)
+        edges = np.arange(0.0, float(max_dose) + float(bw), float(bw), dtype=np.float32)
         if edges.size < 2:
             _fail("Failed to build DVH bins.")
             return
-        centers = np.asarray(edges[:-1], dtype=np.float64)
+        centers = np.asarray(edges[:-1], dtype=np.float32)
         j["_bins_edges"] = edges
         j["_bins_centers"] = centers
 
@@ -899,7 +967,7 @@ class DVHWidget(QWidget):
             if unc_node is not None:
                 uarr = None
                 try:
-                    uarr = slicer.util.arrayFromVolume(unc_node).astype(np.float64, copy=False)
+                    uarr = np.asarray(slicer.util.arrayFromVolume(unc_node), dtype=np.float32)
                 except Exception:
                     uarr = None
                 j["_unc_arr_by_label"][label] = uarr
@@ -1084,30 +1152,7 @@ class DVHWidget(QWidget):
             self._set_status("Building table/plot…")
             self._set_progress(92, visible=True)
 
-            # Update legend (structures + styles + CI)
-            try:
-                scale_for_legend = float(j2.get("_dose_scale", 1.0))
-                seg = j2["seg_node"].GetSegmentation() if j2.get("seg_node") is not None else None
-                items = []
-                for sid in j2.get("seg_ids", []):
-                    sname = str(sid)
-                    scol = j2.get("seg_color_by_id", {}).get(str(sid), None)
-                    try:
-                        if seg is not None:
-                            sobj = seg.GetSegment(str(sid))
-                            if sobj is not None:
-                                sname = sobj.GetName() or sname
-                                if scol is None and hasattr(sobj, "GetColor"):
-                                    c = sobj.GetColor()
-                                    scol = (float(c[0]), float(c[1]), float(c[2]))
-                    except Exception:
-                        pass
-                    if scol is None:
-                        scol = (0.0, 0.0, 0.0)
-                    items.append({"name": sname, "color": scol})
-                self._update_legend(items, dose_scale=scale_for_legend)
-            except Exception:
-                pass
+            # Legend is handled in the matplotlib PNG and UI legend; nothing to do here.
 
             table_name = str(j2.get("out_base"))
             table_node = _create_or_get_table_node(table_name)
@@ -1118,11 +1163,11 @@ class DVHWidget(QWidget):
             table = table_node.GetTable()
             table.Initialize()
 
-            centers2 = np.asarray(j2.get("_bins_centers"), dtype=np.float64)
+            centers2 = np.asarray(j2.get("_bins_centers"), dtype=np.float32)
             nrows = int(centers2.size)
 
             # X axis (dose in Gy)
-            xcol = vtk.vtkDoubleArray()
+            xcol = vtk.vtkFloatArray()
             xcol.SetName("dose_gy")
             xcol.SetNumberOfTuples(nrows)
             table.AddColumn(xcol)
@@ -1174,16 +1219,16 @@ class DVHWidget(QWidget):
                 col_base = _safe_col_base(label)
                 col_vpct = f"{col_base} | V%"
                 col_vcc = f"{col_base} | Vcc"
-                vp = vtk.vtkDoubleArray(); vp.SetName(col_vpct); vp.SetNumberOfTuples(nrows)
-                vc = vtk.vtkDoubleArray(); vc.SetName(col_vcc); vc.SetNumberOfTuples(nrows)
+                vp = vtk.vtkFloatArray(); vp.SetName(col_vpct); vp.SetNumberOfTuples(nrows)
+                vc = vtk.vtkFloatArray(); vc.SetName(col_vcc); vc.SetNumberOfTuples(nrows)
                 table.AddColumn(vp)
                 table.AddColumn(vc)
                 col_specs.append((col_vpct, col_vcc, c))
 
             # Fill curve columns
             for ci, (col_vpct, col_vcc, c) in enumerate(col_specs):
-                vpct = np.asarray(c.get("vpct"), dtype=np.float64)
-                vcc = np.asarray(c.get("vcc"), dtype=np.float64)
+                vpct = np.asarray(c.get("vpct"), dtype=np.float32)
+                vcc = np.asarray(c.get("vcc"), dtype=np.float32)
                 if vpct.size != nrows:
                     continue
                 for r in range(nrows):
@@ -1193,46 +1238,154 @@ class DVHWidget(QWidget):
                     except Exception:
                         pass
 
-            # --- One-sided halo for uncertainty curves (±3σ)
-            # We approximate clipping by drawing several curves shifted *inside* the interval:
-            #   +3σ (upper boundary): shift downward (y - k*delta)
-            #   -3σ (lower boundary): shift upward   (y + k*delta)
-            # This ensures the halo does not visually extend outside the interval.
-            halo_specs = []  # list of (y_column_name, rgb, opacity)
-            HALO_LAYERS = 4
-            HALO_DELTA_VPCT = 0.8
-            for (col_vpct, _col_vcc, c) in col_specs:
-                kind = str(c.get("kind", ""))
-                if kind not in ("+3sigma", "-3sigma"):
-                    continue
-                base = np.asarray(c.get("vpct"), dtype=np.float64)
-                if base.size != nrows:
-                    continue
-                rgb = c.get("color", None) or (0.0, 0.0, 0.0)
-                sign = -1.0 if kind.startswith("+") else 1.0
-                for k in range(1, int(HALO_LAYERS) + 1):
-                    y2 = base + (sign * float(k) * float(HALO_DELTA_VPCT))
+            def _render_matplotlib_png():
+                try:
+                    import matplotlib
+
+                    matplotlib.use("Agg")
                     try:
-                        y2 = np.clip(y2, 0.0, 100.0)
+                        matplotlib.set_loglevel("warning")
                     except Exception:
                         pass
-                    col_halo = f"{col_vpct} | halo_{k:02d}"
-                    arr = vtk.vtkDoubleArray()
-                    arr.SetName(col_halo)
-                    arr.SetNumberOfTuples(nrows)
-                    for r in range(nrows):
+                    import matplotlib.pyplot as plt
+                    import tempfile
+                except Exception:
+                    return None
+
+                xs = np.asarray(centers2, dtype=np.float32)
+                if xs.size == 0:
+                    return None
+
+                try:
+                    plt.style.use("seaborn-v0_8-colorblind")
+                except Exception:
+                    pass
+
+                fig, ax = plt.subplots(figsize=(6.4, 4.0), dpi=110)
+                ax.set_facecolor("#f6f7fb")
+                ax.set_xlabel("Dose (Gy)")
+                ax.set_ylabel("Volume (%)")
+                ax.grid(True, alpha=0.25, color="#cfd3dc", linewidth=0.8)
+
+                grouped = {}
+                for c in curves:
+                    key = (c.get("dose_label", ""), c.get("seg_id", ""))
+                    try:
+                        grouped.setdefault(key, {})[str(c.get("kind", "mean"))] = c
+                    except Exception:
+                        pass
+
+                structure_handles = []
+                structure_labels = []
+                added_struct_labels = set()
+                unc_patch_handle = None
+
+                for (_dl, _sid), ck in grouped.items():
+                    dose_label = _dl or ""
+                    mean_c = ck.get("mean")
+                    if mean_c is None:
+                        continue
+                    y_mean = np.asarray(mean_c.get("vpct"), dtype=np.float32)
+                    if y_mean.size != xs.size:
+                        continue
+                    rgb = mean_c.get("color", None) or (0.0, 0.0, 0.0)
+                    try:
+                        struct_label = str(mean_c.get("seg_name", "") or "")
+                    except Exception:
+                        struct_label = ""
+
+                    # Fill between -3σ et +3σ (gris translucide)
+                    upper_c = ck.get("+3sigma")
+                    lower_c = ck.get("-3sigma")
+                    if upper_c is not None and lower_c is not None:
+                        y_up = np.asarray(upper_c.get("vpct"), dtype=np.float32)
+                        y_lo = np.asarray(lower_c.get("vpct"), dtype=np.float32)
+                        if y_up.size == xs.size and y_lo.size == xs.size:
+                            try:
+                                ax.fill_between(xs, y_lo, y_up, color=rgb, alpha=0.20, linewidth=0)
+                                # keep fill for CI; add a single legend entry later
+                                if unc_patch_handle is None:
+                                    from matplotlib.patches import Patch
+
+                                    unc_patch_handle = Patch(facecolor="#9ca3af", edgecolor="#4b5563", alpha=0.35, label="Uncertainty (±3σ)")
+                            except Exception:
+                                pass
+                    try:
+                        line_style = "--" if dose_label == "B" else "-"
+                        ax.plot(xs, y_mean, color=rgb, lw=1.8, alpha=1.0, linestyle=line_style, label=struct_label)
                         try:
-                            arr.SetValue(r, float(y2[r]))
+                            line_handle = ax.lines[-1]
+                            if struct_label and struct_label not in added_struct_labels:
+                                added_struct_labels.add(struct_label)
+                                structure_handles.append(line_handle)
+                                structure_labels.append(struct_label)
                         except Exception:
-                            arr.SetValue(r, 0.0)
-                    table.AddColumn(arr)
-                    # Slight opacity falloff with depth
-                    opacity = max(0.04, 0.14 - 0.02 * float(k))
-                    halo_specs.append((col_halo, rgb, opacity))
+                            pass
+                    except Exception:
+                        pass
+
+                try:
+                    legend_handles = []
+                    legend_labels = []
+
+                    # Structures: one entry per structure (color-coded)
+                    legend_handles.extend(structure_handles)
+                    legend_labels.extend(structure_labels)
+
+                    # Dose roles (global)
+                    from matplotlib.lines import Line2D
+
+                    legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="-", label="Dose ref"))
+                    legend_labels.append("Dose ref")
+                    legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="--", label="Dose estimated"))
+                    legend_labels.append("Dose estimated")
+
+                    if unc_patch_handle is not None:
+                        legend_handles.append(unc_patch_handle)
+                        legend_labels.append("Uncertainty (±3σ)")
+
+                    ax.legend(legend_handles, legend_labels, loc="best", fontsize=8, frameon=True, fancybox=True)
+                except Exception:
+                    pass
+                try:
+                    fig.tight_layout()
+                except Exception:
+                    pass
+
+                buf = io.BytesIO()
+                try:
+                    fig.savefig(buf, format="png", dpi=110)
+                except Exception:
+                    return None
+                try:
+                    out_path = os.path.join(tempfile.gettempdir(), f"{table_name}.png")
+                    with open(out_path, "wb") as f:
+                        f.write(buf.getvalue())
+                    return out_path
+                except Exception:
+                    return None
+                finally:
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        pass
 
             table_node.Modified()
             try:
                 table.Modified()
+            except Exception:
+                pass
+
+            try:
+                png_path = _render_matplotlib_png()
+                if png_path:
+                    j2["png_path"] = png_path
+                    self._last_png_path = png_path
+                    try:
+                        if self.show_png_btn is not None:
+                            self.show_png_btn.setEnabled(True)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -1264,7 +1417,7 @@ class DVHWidget(QWidget):
                 except Exception:
                     pass
 
-                # --- Uncertainty visualization: one-sided halo via shifted curves
+                # --- Uncertainty visualization: semi-transparent lines (no halo)
                 series_index = 0
                 created_series_nodes = []
 
@@ -1329,22 +1482,16 @@ class DVHWidget(QWidget):
                     except Exception:
                         pass
 
-                # Add uncertainty halos first (so mean lines remain crisp on top)
-                try:
-                    for (y_col, rgb, opacity) in halo_specs or []:
-                        _add_line_series(y_col, rgb, "unc_halo", width=10, dashed=False, opacity=opacity)
-                except Exception:
-                    pass
-
-                # Always add mean curves as crisp lines
+                # Add uncertainty lines first (semi-transparent) then crisp mean lines on top
                 for _ci, (col_vpct, _col_vcc, c) in enumerate(col_specs):
                     kind = str(c.get("kind", ""))
-                    if "sigma" in kind:
-                        continue
                     dose_label = str(c.get("dose_label", ""))
                     rgb = c.get("color", None) or (0.0, 0.0, 0.0)
                     dashed = (dose_label == "B")
-                    _add_line_series(col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None)
+                    if "sigma" in kind:
+                        _add_line_series(col_vpct, rgb, "unc", width=2, dashed=False, opacity=0.35)
+                    else:
+                        _add_line_series(col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None)
 
 
                 chart_node.SetTitle(table_name)
@@ -1440,6 +1587,15 @@ class DVHWidget(QWidget):
                         _reparent_node(chart_node, target_folder)
                         for s in created_series_nodes or []:
                             _reparent_node(s, target_folder)
+
+                        png_node = None
+                        try:
+                            png_path = j2.get("png_path", None)
+                        except Exception:
+                            png_path = None
+                        if png_path:
+                            png_node = self._load_png_node(png_path, f"{table_name}_png")
+                            _reparent_node(png_node, target_folder)
                 except Exception:
                     pass
 

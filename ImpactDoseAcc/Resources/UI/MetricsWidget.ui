@@ -1,0 +1,475 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MetricsEvaluationWidget</class>
+ <widget class="QWidget" name="MetricsEvaluationWidget">
+  <layout class="QVBoxLayout" name="verticalLayout_root">
+   <item>
+    <widget class="QGroupBox" name="inputs_group">
+     <property name="title">
+      <string>1. Inputs</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_inputs">
+      <item>
+       <layout class="QHBoxLayout" name="header_layout">
+        <item>
+         <widget class="QLabel" name="header_label">
+          <property name="text">
+           <string>Select inputs for Phase 3 metrics:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="header_spacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeType">
+           <enum>QSizePolicy::Expanding</enum>
+          </property>
+          <property name="sizeHint">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QPushButton" name="refresh_btn">
+          <property name="maximumWidth">
+           <number>60</number>
+          </property>
+          <property name="text">
+           <string>⟳</string>
+          </property>
+          <property name="toolTip">
+           <string>Refresh lists</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="ref_row">
+        <item>
+         <widget class="QLabel" name="ref_label">
+          <property name="text">
+           <string>Reference dose:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="ref_dose_combo"/>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="out_row">
+        <item>
+         <widget class="QLabel" name="out_label">
+          <property name="text">
+           <string>Output dose:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="out_dose_combo"/>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="unc_row">
+        <item>
+         <widget class="QLabel" name="unc_label">
+          <property name="text">
+           <string>Output uncertainty (optional):</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="unc_combo"/>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="seg_row">
+        <item>
+         <widget class="QLabel" name="seg_label">
+          <property name="text">
+           <string>Segmentation (structures):</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="qMRMLNodeComboBox" name="seg_selector"/>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="segments_group">
+        <property name="title">
+         <string>Segments to include</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_segments">
+         <item>
+          <widget class="QScrollArea" name="segments_scroll">
+           <property name="widgetResizable">
+            <bool>true</bool>
+           </property>
+           <property name="minimumHeight">
+            <number>130</number>
+           </property>
+           <widget class="QWidget" name="segments_scroll_content">
+            <layout class="QVBoxLayout" name="segments_scroll_layout">
+             <item>
+              <spacer name="segments_spacer">
+               <property name="orientation">
+                <enum>Qt::Vertical</enum>
+               </property>
+               <property name="sizeType">
+                <enum>QSizePolicy::Expanding</enum>
+               </property>
+               <property name="sizeHint">
+                <size>
+                 <width>20</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="output_row">
+        <item>
+         <widget class="QLabel" name="output_label">
+          <property name="text">
+           <string>Output table name:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="output_name_edit">
+          <property name="text">
+           <string>metrics_x</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="metrics_group">
+     <property name="title">
+      <string>2. Metrics list</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_metrics">
+      <item>
+       <widget class="QCheckBox" name="cb_dose_mean">
+        <property name="text">
+         <string>Output dose mean</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cb_dose_minmax_3sigma">
+        <property name="text">
+         <string>Output dose min/max (mean ± 3*unc)</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cb_err_mae">
+        <property name="text">
+         <string>MAE (|Output - Reference|)</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cb_unc_mean">
+        <property name="text">
+         <string>Mean dose uncertainty</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cb_gamma_pr">
+        <property name="text">
+         <string>Gamma pass rate (%)</string>
+        </property>
+        <property name="checked">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QWidget" name="gamma_params_widget" native="true">
+        <layout class="QVBoxLayout" name="gamma_params_layout">
+         <property name="leftMargin">
+          <number>20</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="gamma_row1">
+           <item>
+            <widget class="QLabel" name="gamma_label_dose_diff">
+             <property name="text">
+              <string>Dose diff (%):</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QDoubleSpinBox" name="gamma_dose_percent_edit">
+             <property name="decimals">
+              <number>1</number>
+             </property>
+             <property name="singleStep">
+              <double>0.5</double>
+             </property>
+             <property name="minimum">
+              <double>0.0</double>
+             </property>
+             <property name="maximum">
+              <double>5.0</double>
+             </property>
+             <property name="value">
+              <double>2.0</double>
+             </property>
+             <property name="toolTip">
+              <string>Dose difference threshold as percentage of reference dose global max</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="gamma_row1_spacer">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
+             <property name="sizeHint">
+              <size>
+               <width>12</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QLabel" name="gamma_label_dta">
+             <property name="text">
+              <string>DTA (mm):</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QDoubleSpinBox" name="gamma_dist_mm_edit">
+             <property name="decimals">
+              <number>1</number>
+             </property>
+             <property name="singleStep">
+              <double>0.5</double>
+             </property>
+             <property name="minimum">
+              <double>0.0</double>
+             </property>
+             <property name="maximum">
+              <double>5.0</double>
+             </property>
+             <property name="value">
+              <double>2.0</double>
+             </property>
+             <property name="toolTip">
+              <string>Distance to agreement threshold in millimeters</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="gamma_row1_stretch">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="gamma_row2">
+           <item>
+            <widget class="QLabel" name="gamma_label_cutoff">
+             <property name="text">
+              <string>Low-dose cutoff (% of ref global max):</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QDoubleSpinBox" name="gamma_low_cutoff_edit">
+             <property name="decimals">
+              <number>0</number>
+             </property>
+             <property name="singleStep">
+              <double>10.0</double>
+             </property>
+             <property name="minimum">
+              <double>0.0</double>
+             </property>
+             <property name="maximum">
+              <double>50.0</double>
+             </property>
+             <property name="value">
+              <double>30.0</double>
+             </property>
+             <property name="toolTip">
+              <string>Lower dose cutoff as percentage of reference dose global max</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="gamma_row2_spacer">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
+             <property name="sizeHint">
+              <size>
+               <width>12</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QLabel" name="gamma_mode_label">
+             <property name="text">
+              <string>Mode:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="gamma_mode_combo">
+             <property name="maximumWidth">
+              <number>100</number>
+             </property>
+             <item>
+              <property name="text">
+               <string>Global</string>
+              </property>
+             </item>
+             <item>
+              <property name="text">
+               <string>Local</string>
+              </property>
+             </item>
+            </widget>
+           </item>
+           <item>
+            <spacer name="gamma_row2_stretch">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="run_btn">
+     <property name="text">
+      <string>Compute metrics</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="status_label">
+     <property name="text">
+      <string></string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QProgressBar" name="progress_bar">
+     <property name="value">
+      <number>0</number>
+     </property>
+     <property name="textVisible">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="root_spacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Expanding</enum>
+     </property>
+     <property name="sizeHint">
+      <size>
+       <width>20</width>
+       <height>40</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

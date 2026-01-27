@@ -13,8 +13,6 @@ from slicer.ScriptedLoadableModule import (
 
 logger = logging.getLogger(__name__)
 
-SERVICE = "ImpactDoseAcc"
-
 from qt import (
     QTabWidget,
     QWidget,
@@ -22,7 +20,10 @@ from qt import (
     QMessageBox,
     QFileDialog,
     QVBoxLayout,
+    QSizePolicy,
 )
+
+SERVICE = "ImpactDoseAcc"
 
 try:
     # Normal package import within Slicer
@@ -33,7 +34,6 @@ try:
 except Exception:
     # Fallback when executed without package context: import modules by file path
     import importlib.util
-    from pathlib import Path
     base_dir = Path(__file__).resolve().parent
 
     def _load_from_file(module_name: str, file_path: Path):
@@ -147,6 +147,7 @@ class ImpactDoseAccWidget(ScriptedLoadableModuleWidget):
     def setup(self) -> None:
         super().setup()
         self.tabWidget = QTabWidget()
+        self.tabWidget.setMaximumWidth(800)
         self.tab_prescription = PrescriptionDoseEstimationWidget(self.logic)
         self.tab_accumulation = DoseAccumulationWidget(self.logic)
         self.tab_metrics = MetricsEvaluationWidget(self.logic)

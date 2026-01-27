@@ -83,6 +83,7 @@ def _ram_available_bytes(fraction: float = 0.8) -> Optional[int]:
     except Exception:
         return None
 
+
 class MetricsEvaluationWidget(QWidget):
     """UI widget for Phase 3: Metrics & Evaluation."""
 
@@ -96,216 +97,131 @@ class MetricsEvaluationWidget(QWidget):
         self._active_job = None
         self._setup_ui()
 
+    # Small UI helpers to reduce getattr/None checks
+    def _w(self, name):
+        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
+
+    def _layout(self, widget_name):
+        w = self._w(widget_name)
+        return w.layout() if w is not None and hasattr(w, "layout") else None
+
+    def _btn(self, name, cb):
+        btn = self._w(name)
+        if btn is not None and cb:
+            btn.clicked.connect(cb)
+        return btn
+
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout()
+        ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/MetricsWidget.ui"))
+        ui_widget = slicer.util.loadUI(ui_path)
+        self.ui = slicer.util.childWidgetVariables(ui_widget)
+        self._root_widget = ui_widget
 
-        inputs_group = QGroupBox("1. Inputs")
-        inputs_layout = QVBoxLayout()
+        # Bind widgets
+        self.ref_dose_combo = self._w("ref_dose_combo")
+        self.out_dose_combo = self._w("out_dose_combo")
+        self.unc_combo = self._w("unc_combo")
+        self.seg_selector = self._w("seg_selector")
+        self.output_name_edit = self._w("output_name_edit")
+        self.cb_dose_mean = self._w("cb_dose_mean")
+        self.cb_dose_minmax_3sigma = self._w("cb_dose_minmax_3sigma")
+        self.cb_err_mae = self._w("cb_err_mae")
+        self.cb_unc_mean = self._w("cb_unc_mean")
+        self.cb_gamma_pr = self._w("cb_gamma_pr")
+        self.gamma_dose_percent_edit = self._w("gamma_dose_percent_edit")
+        self.gamma_dist_mm_edit = self._w("gamma_dist_mm_edit")
+        self.gamma_low_cutoff_edit = self._w("gamma_low_cutoff_edit")
+        self.gamma_mode_combo = self._w("gamma_mode_combo")
+        self.run_btn = self._w("run_btn")
+        self.status_label = self._w("status_label")
+        self.progress_bar = self._w("progress_bar")
+        self._segments_group = self._w("segments_group")
+        self._segments_scroll = self._w("segments_scroll")
+        self._segments_scroll_content = self._w("segments_scroll_content")
+        self._segments_scroll_layout = self._layout("segments_scroll_content")
+        self._gamma_params_widget = self._w("gamma_params_widget")
+        self._gamma_label_dose_diff = self._w("gamma_label_dose_diff")
+        self._gamma_label_dta = self._w("gamma_label_dta")
+        self._gamma_label_cutoff = self._w("gamma_label_cutoff")
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Select inputs for Phase 3 metrics:"))
-        header.addStretch()
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setMaximumWidth(40)
-        refresh_btn.setToolTip("Refresh lists")
-        refresh_btn.clicked.connect(self._refresh_lists)
-        header.addWidget(refresh_btn)
-        inputs_layout.addLayout(header)
+        # Configure segmentation selector
+        if self.seg_selector is not None:
+            try:
+                self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
+                self.seg_selector.selectNodeUponCreation = False
+                self.seg_selector.addEnabled = False
+                self.seg_selector.removeEnabled = False
+                self.seg_selector.noneEnabled = True
+                self.seg_selector.showHidden = False
+                self.seg_selector.setMRMLScene(slicer.mrmlScene)
+            except Exception:
+                pass
 
-        ref_row = QHBoxLayout()
-        ref_row.addWidget(QLabel("Reference dose:"))
-        self.ref_dose_combo = QComboBox()
-        ref_row.addWidget(self.ref_dose_combo, 1)
-        inputs_layout.addLayout(ref_row)
+        # Buttons & signals
+        self._btn("refresh_btn", self._refresh_lists)
+        if self.run_btn is not None:
+            try:
+                self.run_btn.clicked.connect(self._on_compute_metrics)
+            except Exception:
+                pass
+        if self.seg_selector is not None:
+            try:
+                self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
+            except Exception:
+                pass
 
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("Output dose:"))
-        self.out_dose_combo = QComboBox()
-        out_row.addWidget(self.out_dose_combo, 1)
-        inputs_layout.addLayout(out_row)
-
-        unc_row = QHBoxLayout()
-        unc_row.addWidget(QLabel("Output uncertainty (optional):"))
-        self.unc_combo = QComboBox()
-        unc_row.addWidget(self.unc_combo, 1)
-        inputs_layout.addLayout(unc_row)
-
-        seg_row = QHBoxLayout()
-        seg_row.addWidget(QLabel("Segmentation (structures):"))
-        self.seg_selector = slicer.qMRMLNodeComboBox()
-        self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
-        self.seg_selector.selectNodeUponCreation = False
-        self.seg_selector.addEnabled = False
-        self.seg_selector.removeEnabled = False
-        self.seg_selector.noneEnabled = True
-        self.seg_selector.showHidden = False
-        self.seg_selector.setMRMLScene(slicer.mrmlScene)
-        seg_row.addWidget(self.seg_selector, 1)
-        inputs_layout.addLayout(seg_row)
-
-        # Segment selection (enabled once segmentation is chosen)
-        segments_group = QGroupBox("Segments to include")
-        segments_group_layout = QVBoxLayout()
-        self._segments_scroll = QScrollArea()
-        self._segments_scroll.setWidgetResizable(True)
-        self._segments_scroll_content = QWidget()
-        self._segments_scroll_layout = QVBoxLayout()
-        self._segments_scroll_content.setLayout(self._segments_scroll_layout)
-        self._segments_scroll.setWidget(self._segments_scroll_content)
-        segments_group_layout.addWidget(self._segments_scroll)
-        segments_group.setLayout(segments_group_layout)
-        inputs_layout.addWidget(segments_group)
-        self._segments_group = segments_group
-
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("Output table name:"))
-        self.output_name_edit = QLineEdit()
-        self.output_name_edit.setText(self._generate_default_output_name())
-        out_row.addWidget(self.output_name_edit, 1)
-        inputs_layout.addLayout(out_row)
-
-        inputs_group.setLayout(inputs_layout)
-        layout.addWidget(inputs_group)
-
-        metrics_group = QGroupBox("2. Metrics list")
-        metrics_layout = QVBoxLayout()
-        self.cb_dose_mean = QCheckBox("Output dose mean")
-        self.cb_dose_minmax_3sigma = QCheckBox("Output dose min/max (mean ± 3*unc)")
-        self.cb_err_mae = QCheckBox("MAE (|Output - Reference|)")
-        self.cb_unc_mean = QCheckBox("Mean dose uncertainty")
-        self.cb_gamma_pr = QCheckBox("Gamma pass rate (%)")
-
+        # Checkbox defaults (gamma off by default)
         for cb in (
             self.cb_dose_mean,
             self.cb_dose_minmax_3sigma,
             self.cb_err_mae,
             self.cb_unc_mean,
-            self.cb_gamma_pr,
         ):
-            cb.setChecked(True)
-            metrics_layout.addWidget(cb)
-
-
-        # Gamma can be expensive: keep it off by default.
+            try:
+                if cb is not None:
+                    cb.setChecked(True)
+            except Exception:
+                pass
         try:
-            self.cb_gamma_pr.setChecked(False)
+            if self.cb_gamma_pr is not None:
+                self.cb_gamma_pr.setChecked(False)
         except Exception:
             pass
-
-        # Gamma parameters (shown when gamma metric is enabled)
-        gamma_params = QWidget()
-        gamma_params_layout = QVBoxLayout()
-        gamma_params_layout.setContentsMargins(20, 0, 0, 0)
-
-        row1 = QHBoxLayout()
-
-        w_label_dose_diff = QLabel("Dose diff (%):")
-        w_spin_dose_diff = QDoubleSpinBox()
-        w_spin_dose_diff.setDecimals(1)
-        w_spin_dose_diff.setSingleStep(0.5)
-        w_spin_dose_diff.setRange(0.0, 5.0)
-        w_spin_dose_diff.setValue(2.0)
-        w_spin_dose_diff.setToolTip("Dose difference threshold as percentage of reference dose global max")
-
-        # Keep references (PythonQt can GC locals even when added to layouts)
-        self.gamma_dose_percent_edit = w_spin_dose_diff
-        self._gamma_label_dose_diff = w_label_dose_diff
-
-        row1.addWidget(w_label_dose_diff)
-        row1.addWidget(w_spin_dose_diff)
-        
-        row1.addSpacing(12)
-
-        w_label_dta = QLabel("DTA (mm):")
-        w_spin_dta = QDoubleSpinBox()
-        w_spin_dta.setDecimals(1)
-        w_spin_dta.setSingleStep(0.5)
-        w_spin_dta.setRange(0.0, 5.0)
-        w_spin_dta.setValue(2.0)
-        w_spin_dta.setToolTip("Distance to agreement threshold in millimeters")
-
-        self.gamma_dist_mm_edit = w_spin_dta
-        self._gamma_label_dta = w_label_dta
-        
-        row1.addWidget(w_label_dta)
-        row1.addWidget(w_spin_dta)
-
-        row1.addStretch(1)
-
-        row2 = QHBoxLayout()
-
-        w_label_cutoff = QLabel("Low-dose cutoff (% of ref global max):")
-        w_spin_cutoff = QDoubleSpinBox()
-        w_spin_cutoff.setDecimals(0)
-        w_spin_cutoff.setSingleStep(10)
-        w_spin_cutoff.setRange(0, 50)
-        w_spin_cutoff.setValue(30)
-        w_spin_cutoff.setToolTip("Lower dose cutoff as percentage of reference dose global max")
-
-        self.gamma_low_cutoff_edit = w_spin_cutoff
-        self._gamma_label_cutoff = w_label_cutoff
-        
-        row2.addWidget(w_label_cutoff)
-        row2.addWidget(w_spin_cutoff)
-
-        row2.addSpacing(12)
-        row2.addWidget(QLabel("Mode:"))
-        self.gamma_mode_combo = QComboBox()
-        self.gamma_mode_combo.addItems(["Global", "Local"])
-        self.gamma_mode_combo.setMaximumWidth(100)
-        row2.addWidget(self.gamma_mode_combo)
-        row2.addStretch(1)
-        gamma_params_layout.addLayout(row1)
-        gamma_params_layout.addLayout(row2)
-
-        gamma_params.setLayout(gamma_params_layout)
-        metrics_layout.addWidget(gamma_params)
-        self._gamma_params_widget = gamma_params
-
-        # Keep layout references to avoid row disappearing issues
-        self._gamma_params_layout = gamma_params_layout
-        self._gamma_row1_layout = row1
-        self._gamma_row2_layout = row2
 
         def _sync_gamma_params_visibility():
             try:
-                self._gamma_params_widget.setVisible(bool(self.cb_gamma_pr.isChecked()))
+                if self._gamma_params_widget is not None and self.cb_gamma_pr is not None:
+                    self._gamma_params_widget.setVisible(bool(self.cb_gamma_pr.isChecked()))
             except Exception:
                 pass
 
-        try:
-            self.cb_gamma_pr.toggled.connect(_sync_gamma_params_visibility)
-        except Exception:
-            pass
+        if self.cb_gamma_pr is not None:
+            try:
+                self.cb_gamma_pr.toggled.connect(_sync_gamma_params_visibility)
+            except Exception:
+                pass
         _sync_gamma_params_visibility()
 
-        metrics_group.setLayout(metrics_layout)
-        layout.addWidget(metrics_group)
+        if self.output_name_edit is not None:
+            try:
+                self.output_name_edit.setText(self._generate_default_output_name())
+            except Exception:
+                pass
 
-        self.run_btn = QPushButton("Compute metrics")
-        self.run_btn.clicked.connect(self._on_compute_metrics)
-        layout.addWidget(self.run_btn)
+        if self.progress_bar is not None:
+            try:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setVisible(False)
+            except Exception:
+                pass
 
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
-        layout.addStretch()
+        layout = QVBoxLayout(self)
+        layout.addWidget(ui_widget)
         self.setLayout(layout)
 
-        try:
-            self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
-        except Exception:
-            pass
-
         self._refresh_lists()
-        self._on_segmentation_changed(self.seg_selector.currentNode())
+        self._on_segmentation_changed(self.seg_selector.currentNode() if self.seg_selector is not None else None)
 
     def _clear_layout(self, layout) -> None:
         if layout is None:
@@ -531,18 +447,29 @@ class MetricsEvaluationWidget(QWidget):
     def _needs_resample_to_reference(self, input_node, reference_node) -> bool:
         if input_node is None or reference_node is None:
             return False
-        in_arr = slicer.util.arrayFromVolume(input_node)
-        ref_arr = slicer.util.arrayFromVolume(reference_node)
-        if tuple(getattr(in_arr, "shape", ())) != tuple(getattr(ref_arr, "shape", ())):
-            return True
+        # Compare dimensions without loading voxel arrays.
+        try:
+            in_img = input_node.GetImageData()
+            ref_img = reference_node.GetImageData()
+            in_dims = in_img.GetDimensions() if in_img is not None else None
+            ref_dims = ref_img.GetDimensions() if ref_img is not None else None
+            if in_dims is None or ref_dims is None or in_dims != ref_dims:
+                return True
+        except Exception:
+            pass
+
+        # Compare IJK->RAS matrices.
         m_in = vtk.vtkMatrix4x4()
         m_ref = vtk.vtkMatrix4x4()
-        input_node.GetIJKToRASMatrix(m_in)
-        reference_node.GetIJKToRASMatrix(m_ref)
-        for r in range(4):
-            for c in range(4):
-                if abs(m_in.GetElement(r, c) - m_ref.GetElement(r, c)) > 1e-6:
-                    return True
+        try:
+            input_node.GetIJKToRASMatrix(m_in)
+            reference_node.GetIJKToRASMatrix(m_ref)
+            for r in range(4):
+                for c in range(4):
+                    if abs(m_in.GetElement(r, c) - m_ref.GetElement(r, c)) > 1e-6:
+                        return True
+        except Exception:
+            pass
         return False
 
     def _create_temp_volume_from_array(self, reference_node, array, name_prefix: str):
@@ -593,10 +520,15 @@ class MetricsEvaluationWidget(QWidget):
             return float(default)
 
     def _gamma_mode_is_local(self) -> bool:
+        # currentText may be exposed as a property or a callable; normalize before checking
+        if self.gamma_mode_combo is None:
+            return False
         try:
-            return str(self.gamma_mode_combo.currentText).lower().startswith("local")
+            val = self.gamma_mode_combo.currentText
+            txt = val() if callable(val) else val
+            return str(txt).lower().startswith("local")
         except Exception:
-            return str(self.gamma_mode_combo.currentText()).lower().startswith("local")
+            return False
 
     def _create_or_get_table_node(self, name: str):
         if slicer.mrmlScene is None:
@@ -1303,209 +1235,6 @@ class MetricsEvaluationWidget(QWidget):
 
             self._set_status("Computing per-segment metrics…")
             self._set_progress(40, visible=True)
-
-            # Fast path: export a single multi-label labelmap once (major speedup vs N exports).
-            label_arr = None
-            label_value_by_id = {}
-            seg = None
-            labelmap = None
-            try:
-                seg = job["seg_node"].GetSegmentation()
-            except Exception:
-                seg = None
-            try:
-                seg_logic = slicer.modules.segmentations.logic()
-                labelmap = slicer.mrmlScene.AddNewNodeByClass(
-                    "vtkMRMLLabelMapVolumeNode", f"tmp_metrics_{uuid4().hex[:6]}"
-                )
-                try:
-                    labelmap.SetHideFromEditors(1)
-                    labelmap.SetSelectable(0)
-                    labelmap.SetSaveWithScene(0)
-                except Exception:
-                    pass
-
-                seg_ids_vtk = vtk.vtkStringArray()
-                for sid in seg_ids:
-                    seg_ids_vtk.InsertNextValue(str(sid))
-                seg_logic.ExportSegmentsToLabelmapNode(job["seg_node"], seg_ids_vtk, labelmap, job["out_dose_node"])
-                label_arr = np.asarray(slicer.util.arrayFromVolume(labelmap))
-
-                for sid in seg_ids:
-                    lv = None
-                    try:
-                        seg_obj = seg.GetSegment(sid) if seg is not None else None
-                        if seg_obj is not None and hasattr(seg_obj, "GetLabelValue"):
-                            lv = int(seg_obj.GetLabelValue())
-                    except Exception:
-                        lv = None
-                    if lv is not None and lv > 0:
-                        label_value_by_id[sid] = lv
-            except Exception:
-                label_arr = None
-                label_value_by_id = {}
-            finally:
-                try:
-                    if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
-                        slicer.mrmlScene.RemoveNode(labelmap)
-                except Exception:
-                    pass
-
-            if label_arr is not None and label_value_by_id:
-                # Names are MRML access; keep on UI thread.
-                name_by_id = {}
-                for sid in seg_ids:
-                    nm = str(sid)
-                    try:
-                        seg_obj = seg.GetSegment(sid) if seg is not None else None
-                        nm = seg_obj.GetName() if seg_obj is not None else str(sid)
-                    except Exception:
-                        nm = str(sid)
-                    name_by_id[sid] = nm
-
-                do_mae = bool(self.cb_err_mae.isChecked())
-                do_unc = bool(job.get("_unc_arr") is not None and (self.cb_unc_mean.isChecked() or self.cb_dose_minmax_3sigma.isChecked()))
-                do_gamma = bool(self.cb_gamma_pr.isChecked() and job.get("gamma_arr") is not None and job.get("_gamma_bbox") is not None)
-
-                def _perseg_fn():
-                    if _is_cancelled():
-                        return {"__cancelled__": True}
-
-                    out_arr = job["_out_arr"]
-                    ref_arr = job["_ref_arr"]
-                    unc_arr = job.get("_unc_arr")
-
-                    label_vals = np.array([label_value_by_id[sid] for sid in seg_ids if sid in label_value_by_id], dtype=np.int64)
-                    if label_vals.size == 0:
-                        return {}
-                    label_vals = np.unique(label_vals)
-                    label_vals_sorted = np.sort(label_vals)
-
-                    labels = label_arr
-                    mask = labels > 0
-                    if not np.any(mask):
-                        return {}
-
-                    lbl_flat = labels[mask].astype(np.int64, copy=False)
-                    idx_in_sorted = np.searchsorted(label_vals_sorted, lbl_flat)
-                    keep = (
-                        (idx_in_sorted >= 0)
-                        & (idx_in_sorted < label_vals_sorted.size)
-                        & (label_vals_sorted[idx_in_sorted] == lbl_flat)
-                    )
-                    if not np.any(keep):
-                        return {}
-
-                    idx = idx_in_sorted[keep]
-                    out_vals = out_arr[mask][keep]
-
-                    counts = np.bincount(idx, minlength=label_vals_sorted.size).astype(np.int64)
-                    sum_out = np.bincount(idx, weights=out_vals, minlength=label_vals_sorted.size)
-                    sum_out2 = np.bincount(idx, weights=(out_vals * out_vals), minlength=label_vals_sorted.size)
-
-                    mean = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
-                    std = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
-                    nz = counts > 0
-                    mean[nz] = sum_out[nz] / counts[nz]
-                    var = (sum_out2[nz] / counts[nz]) - (mean[nz] ** 2)
-                    var = np.maximum(var, 0.0)
-                    std[nz] = np.sqrt(var)
-
-                    mae = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
-                    if do_mae:
-                        ref_vals = ref_arr[mask][keep]
-                        absdiff = np.abs(out_vals - ref_vals)
-                        sum_abs = np.bincount(idx, weights=absdiff, minlength=label_vals_sorted.size)
-                        mae[nz] = sum_abs[nz] / counts[nz]
-
-                    unc_mean = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
-                    if do_unc and unc_arr is not None:
-                        unc_vals = unc_arr[mask][keep]
-                        sum_unc = np.bincount(idx, weights=unc_vals, minlength=label_vals_sorted.size)
-                        unc_mean[nz] = sum_unc[nz] / counts[nz]
-
-                    gamma_pr = np.full(label_vals_sorted.size, np.nan, dtype=np.float64)
-                    if do_gamma:
-                        try:
-                            g = job["gamma_arr"]
-                            z0, z1, y0, y1, x0, x1 = job.get("_gamma_bbox")
-                            lab_crop = labels[z0:z1, y0:y1, x0:x1]
-                            valid = (lab_crop > 0) & np.isfinite(g)
-                            if np.any(valid):
-                                lbl_v = lab_crop[valid].astype(np.int64, copy=False)
-                                idx2 = np.searchsorted(label_vals_sorted, lbl_v)
-                                keep2 = (
-                                    (idx2 >= 0)
-                                    & (idx2 < label_vals_sorted.size)
-                                    & (label_vals_sorted[idx2] == lbl_v)
-                                )
-                                if np.any(keep2):
-                                    idx2 = idx2[keep2]
-                                    denom = np.bincount(idx2, minlength=label_vals_sorted.size).astype(np.int64)
-                                    passed_mask = (g[valid][keep2] <= 1.0)
-                                    passed = np.bincount(
-                                        idx2, weights=passed_mask.astype(np.int64), minlength=label_vals_sorted.size
-                                    )
-                                    dnz = denom > 0
-                                    gamma_pr[dnz] = 100.0 * (passed[dnz] / denom[dnz])
-                        except Exception:
-                            pass
-
-                    label_to_index = {int(v): int(i) for i, v in enumerate(label_vals_sorted)}
-                    out = {}
-                    for sid in seg_ids:
-                        lv = label_value_by_id.get(sid)
-                        nm = name_by_id.get(sid, str(sid))
-                        if lv is None:
-                            out[sid] = {
-                                "name": nm,
-                                "mean": np.nan,
-                                "std": np.nan,
-                                "mae": np.nan,
-                                "unc_mean": np.nan,
-                                "gamma_pr": np.nan,
-                            }
-                            continue
-                        j = label_to_index.get(int(lv))
-                        if j is None or counts[j] <= 0:
-                            out[sid] = {
-                                "name": nm,
-                                "mean": np.nan,
-                                "std": np.nan,
-                                "mae": np.nan,
-                                "unc_mean": np.nan,
-                                "gamma_pr": np.nan,
-                            }
-                        else:
-                            out[sid] = {
-                                "name": nm,
-                                "mean": float(mean[j]),
-                                "std": float(std[j]),
-                                "mae": float(mae[j]) if np.isfinite(mae[j]) else np.nan,
-                                "unc_mean": float(unc_mean[j]) if np.isfinite(unc_mean[j]) else np.nan,
-                                "gamma_pr": float(gamma_pr[j]) if np.isfinite(gamma_pr[j]) else np.nan,
-                            }
-                    return out
-
-                def _perseg_done(per_seg_dict):
-                    job2 = self._active_job
-                    if job2 is None:
-                        return
-                    if _is_cancelled() or (isinstance(per_seg_dict, dict) and per_seg_dict.get("__cancelled__")):
-                        _cancel_finish()
-                        return
-                    job2["per_seg"] = per_seg_dict or {}
-                    self._set_progress(90, visible=True)
-                    _build_table_and_finish()
-
-                def _perseg_err(exc):
-                    if _is_cancelled():
-                        _cancel_finish()
-                        return
-                    _fail(f"Per-segment computation failed: {exc}")
-
-                self._run_in_thread(_perseg_fn, _perseg_done, _perseg_err, poll_ms=150)
-                return
 
             def _one_segment():
                 job2 = self._active_job

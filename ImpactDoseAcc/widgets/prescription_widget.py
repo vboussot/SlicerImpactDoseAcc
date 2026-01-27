@@ -1,17 +1,13 @@
 from qt import (
     QVBoxLayout,
     QHBoxLayout,
-    QGroupBox,
     QLabel,
     QPushButton,
-    QScrollArea,
     QComboBox,
     QCheckBox,
     QFileDialog,
     QWidget,
     QMessageBox,
-    QLineEdit,
-    QProgressBar,
     QTimer,
 )
 import os
@@ -300,159 +296,115 @@ class PrescriptionDoseEstimationWidget(QWidget):
         self._refresh_sessions_callback = refresh_sessions_callback
         self._setup_ui()
 
+    # Small helpers to reduce repetitive getattr/None checks
+    def _w(self, name):
+        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
+
+    def _layout(self, name):
+        w = self._w(name)
+        return w.layout() if w is not None and hasattr(w, "layout") else None
+
+    def _btn(self, name, cb):
+        btn = self._w(name)
+        if btn is not None and cb:
+            btn.clicked.connect(cb)
+        return btn
+
+    def _remove_row(self, row_list: list, row_widget, layout, reset_combo=None):
+        if row_widget not in row_list:
+            return
+        if len(row_list) <= 1:
+            if callable(reset_combo):
+                try:
+                    reset_combo(row_widget)
+                except Exception:
+                    pass
+            return
+        row_list.remove(row_widget)
+        if layout is not None:
+            layout.removeWidget(row_widget)
+        row_widget.hide()
+        row_widget.setEnabled(False)
+        QTimer.singleShot(0, row_widget.deleteLater)
+
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout()
+        ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/PrescriptionWidget.ui"))
+        ui_widget = slicer.util.loadUI(ui_path)
+        self.ui = slicer.util.childWidgetVariables(ui_widget)
+        self._root_widget = ui_widget
 
-        # TPS group now appears first
-        tps_group = QGroupBox("1. External TPS Dose Computation")
-        tps_layout = QVBoxLayout()
-        tps_info = QLabel("Select reference CT and sCT volumes/sequences to export, choose output directory, then click Export.")
-        tps_info.setWordWrap(True)
-        tps_layout.addWidget(tps_info)
+        # Bind main containers/widgets from the .ui file
+        self.ref_ct_combo = self._w("ref_ct_combo")
+        self.sct_list_widget = self._w("sct_list_widget")
+        self.sct_list_container = self._w("sct_list_container")
+        self.sct_list_layout = self._layout("sct_list_container")
+        self.sessions_scroll = self._w("sessions_scroll")
+        self.sessions_container = self._w("sessions_container")
+        self.sessions_container_layout = self._layout("sessions_container")
+        self.dose_rows_container = self._w("dose_rows_container")
+        self.dose_rows_layout = self._layout("dose_rows_container")
+        self.dvf_rows_container = self._w("dvf_rows_container")
+        self.dvf_rows_layout = self._layout("dvf_rows_container")
+        output_container = self._w("output_options_container")
+        self.output_options_layout = output_container.layout() if output_container else None
+        self.output_name_edit = self._w("output_name_edit")
+        self.deform_button = self._w("deform_button")
+        self.status_label = self._w("status_label")
+        self.progress_bar = self._w("progress_bar")
+        self.export_dir_display = self._w("export_dir_display")
+        if self.export_dir_display:
+            self.export_dir_display.setStyleSheet("color: gray;")
 
-        ref_ct_layout = QHBoxLayout()
-        ref_ct_label = QLabel("Reference CT:")
-        self.ref_ct_combo = QComboBox()
+        # Buttons
+        self._btn("refresh_tps_btn", self._refresh_tps_lists)
+        refresh_sessions_cb = self._refresh_sessions_callback or self._refresh_session_combos
+        self._btn("refresh_sessions_btn", refresh_sessions_cb)
+        self.browse_export_btn = self._btn("browse_export_btn", self._browse_export_dir_callback or self._on_browse_export_dir)
+        self.export_btn = self._btn("export_btn", self._export_callback or self._on_export_sct)
+
+        # Populate combos and lists
         self._populate_reference_ct_combo()
-        ref_ct_layout.addWidget(ref_ct_label)
-        ref_ct_layout.addWidget(self.ref_ct_combo, 1)
-        tps_layout.addLayout(ref_ct_layout)
-
-        dose_list_label = QLabel("Available sCT volumes:")
-        dose_list_header = QHBoxLayout()
-        dose_list_header.addWidget(dose_list_label)
-        dose_list_header.addStretch()
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setMaximumWidth(40)
-        refresh_btn.setToolTip("Refresh list")
-        refresh_btn.clicked.connect(self._refresh_tps_lists)
-        dose_list_header.addWidget(refresh_btn)
-        tps_layout.addLayout(dose_list_header)
-
-        self.sct_list_widget = QScrollArea()
-        self.sct_list_widget.setWidgetResizable(True)
-        self.sct_list_widget.setMinimumHeight(170)
-
-        self.sct_list_container = QWidget()
-        self.sct_list_layout = QVBoxLayout(self.sct_list_container)
         self.sct_checkboxes = []
         self._update_sct_list()
-        self.sct_list_layout.addStretch()
-        self.sct_list_widget.setWidget(self.sct_list_container)
-        self.sct_list_widget.setMaximumHeight(170)
-        tps_layout.addWidget(self.sct_list_widget)
 
-        export_dir_layout = QHBoxLayout()
-        export_dir_label = QLabel("Export to:")
-        self.export_dir_display = QLabel("[No directory selected]")
-        self.export_dir_display.setStyleSheet("color: gray;")
-        browse_export_btn = QPushButton("Browse...")
-        self.browse_export_btn = browse_export_btn
-        if self._browse_export_dir_callback:
-            browse_export_btn.clicked.connect(self._browse_export_dir_callback)
-        else:
-            browse_export_btn.clicked.connect(self._on_browse_export_dir)
-        export_dir_layout.addWidget(export_dir_label)
-        export_dir_layout.addWidget(self.export_dir_display, 1)
-        export_dir_layout.addWidget(browse_export_btn)
-        tps_layout.addLayout(export_dir_layout)
-
-        export_btn = QPushButton("Export sCTs to DICOM")
-        self.export_btn = export_btn
-        if self._export_callback:
-            export_btn.clicked.connect(self._export_callback)
-        else:
-            export_btn.clicked.connect(self._on_export_sct)
-        tps_layout.addWidget(export_btn)
-
-        tps_group.setLayout(tps_layout)
-        layout.addWidget(tps_group)
-
-
-
-        session_group = QGroupBox("2. Select Dose Session and DVFs")
-        session_group.setMinimumHeight(450)
-        session_layout = QVBoxLayout()
-        session_header = QHBoxLayout()
-        session_header.addWidget(QLabel("Dose + DVFs:"))
-        session_header.addStretch()
-        refresh_sessions_btn = QPushButton("⟳")
-        refresh_sessions_btn.setMaximumWidth(40)
-        refresh_sessions_btn.setToolTip("Refresh node lists")
-        if self._refresh_sessions_callback:
-            refresh_sessions_btn.clicked.connect(self._refresh_sessions_callback)
-        else:
-            refresh_sessions_btn.clicked.connect(self._refresh_session_combos)
-        session_header.addWidget(refresh_sessions_btn)
-        session_layout.addLayout(session_header)
-
-        self.sessions_scroll = QScrollArea()
-        self.sessions_scroll.setWidgetResizable(True)
-        self.sessions_container = QWidget()
-        self.sessions_container_layout = QVBoxLayout(self.sessions_container)
-        # Multiple dose selection (all DVFs will be applied to each selected dose)
-        self.dose_rows_container = QWidget()
-        self.dose_rows_layout = QVBoxLayout(self.dose_rows_container)
-        self.sessions_container_layout.addWidget(self.dose_rows_container)
-
+        # Dynamic rows containers
         self._dose_widgets = []
-        self._add_dose_selector()
-
-        # DVF samples
-        self.dvf_rows_container = QWidget()
-        self.dvf_rows_layout = QVBoxLayout(self.dvf_rows_container)
-        self.sessions_container_layout.addWidget(self.dvf_rows_container)
-
         self._session_widgets = []
+        self._add_dose_selector()
         self._add_session_selector()
-        self.sessions_container_layout.addStretch()
-        self.sessions_scroll.setWidget(self.sessions_container)
-        session_layout.addWidget(self.sessions_scroll)
 
-        selectors_header = QLabel("Output storage options:")
-        selectors_header.setStyleSheet("font-weight: bold;")
-        session_layout.addWidget(selectors_header)
-
-        # We always create a new deformed-dose sequence on Run.
+        # Output selectors rows
         self.min_output_selector = self._create_volume_selector("Create new min volume on Run")
         self.max_output_selector = self._create_volume_selector("Create new max volume on Run")
-
         self.min_export_checkbox = self._create_export_checkbox()
         self.max_export_checkbox = self._create_export_checkbox()
+        if self.output_options_layout is not None:
+            self.output_options_layout.addLayout(
+                self._build_selector_row("Min dose volume:", self.min_output_selector, self.min_export_checkbox)
+            )
+            self.output_options_layout.addLayout(
+                self._build_selector_row("Max dose volume:", self.max_output_selector, self.max_export_checkbox)
+            )
 
-        session_layout.addLayout(self._build_selector_row("Min dose volume:", self.min_output_selector, self.min_export_checkbox))
-        session_layout.addLayout(self._build_selector_row("Max dose volume:", self.max_output_selector, self.max_export_checkbox))
+        # Deform button callback
+        if self.deform_button:
+            self.deform_button.setToolTip(
+                "Apply DVFs, store deformed doses as a sequence, and export min/max/uncertainty volumes"
+            )
+            if self._deform_callback:
+                self.deform_button.clicked.connect(self._deform_callback)
+            else:
+                self.deform_button.clicked.connect(self._on_deform_and_compute)
 
-        output_name_layout = QHBoxLayout()
-        output_name_layout.addWidget(QLabel("Output name:"))
-        self.output_name_edit = QLineEdit()
-        self.output_name_edit.setText("session_x")
+        # Progress bar initial state
+        if self.progress_bar:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
 
-        output_name_layout.addWidget(self.output_name_edit, 1)
-        session_layout.addLayout(output_name_layout)
-
-        self.deform_button = QPushButton("Compute Dose Session Deformation")
-        self.deform_button.setToolTip("Apply DVFs, store deformed doses as a sequence, and export min/max/uncertainty volumes")
-        if self._deform_callback:
-            self.deform_button.clicked.connect(self._deform_callback)
-        else:
-            self.deform_button.clicked.connect(self._on_deform_and_compute)
-        session_layout.addWidget(self.deform_button)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        session_layout.addWidget(self.status_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        session_layout.addWidget(self.progress_bar)
-
-        session_group.setLayout(session_layout)
-        layout.addWidget(session_group)
-
-        layout.addStretch()
+        # Attach loaded UI to this widget
+        layout = QVBoxLayout(self)
+        layout.addWidget(ui_widget)
         self.setLayout(layout)
 
     def _set_status(self, text: str) -> None:
@@ -476,21 +428,11 @@ class PrescriptionDoseEstimationWidget(QWidget):
             pass
 
     def _set_ui_busy(self, busy: bool) -> None:
-        enabled = not bool(busy)
-        for w in (
-            getattr(self, "deform_button", None),
-            getattr(self, "sessions_scroll", None),
-            getattr(self, "ref_ct_combo", None),
-            getattr(self, "sct_list_widget", None),
-            getattr(self, "export_btn", None),
-            getattr(self, "browse_export_btn", None),
-            getattr(self, "output_name_edit", None),
-        ):
-            try:
-                if w is not None:
-                    w.setEnabled(enabled)
-            except Exception:
-                pass
+        target = getattr(self, "_root_widget", None) or self
+        try:
+            target.setEnabled(not bool(busy))
+        except Exception:
+            pass
 
     def _finish_job(self, ok: bool, message: str = "") -> None:
         self._active_job = None
@@ -633,33 +575,12 @@ class PrescriptionDoseEstimationWidget(QWidget):
             self.dvf_rows_layout.insertWidget(len(self._session_widgets) - 1, row_widget)
 
     def _remove_session_selector(self, row_widget) -> None:
-        try:
-            if row_widget not in self._session_widgets:
-                return
-            # Keep at least one row.
-            if len(self._session_widgets) <= 1:
-                try:
-                    row_widget.dvf_combo.setCurrentIndex(0)
-                except Exception:
-                    pass
-                return
-            self._session_widgets.remove(row_widget)
-            try:
-                if hasattr(self, "dvf_rows_layout"):
-                    self.dvf_rows_layout.removeWidget(row_widget)
-            except Exception:
-                pass
-            try:
-                row_widget.hide()
-                row_widget.setEnabled(False)
-            except Exception:
-                pass
-            try:
-                QTimer.singleShot(0, row_widget.deleteLater)
-            except Exception:
-                pass
-        except Exception:
-            pass
+        self._remove_row(
+            self._session_widgets,
+            row_widget,
+            getattr(self, "dvf_rows_layout", None),
+            reset_combo=lambda r: getattr(getattr(r, "dvf_combo", None), "setCurrentIndex", lambda *_: None)(0),
+        )
 
     def _add_dose_selector(self) -> None:
         row_widget = DoseSelectorRow(self._is_rtdose, on_add=self._add_dose_selector, on_remove=self._remove_dose_selector)
@@ -668,33 +589,12 @@ class PrescriptionDoseEstimationWidget(QWidget):
             self.dose_rows_layout.insertWidget(len(self._dose_widgets) - 1, row_widget)
 
     def _remove_dose_selector(self, row_widget) -> None:
-        try:
-            if row_widget not in self._dose_widgets:
-                return
-            # Keep at least one row.
-            if len(self._dose_widgets) <= 1:
-                try:
-                    row_widget.dose_combo.setCurrentIndex(0)
-                except Exception:
-                    pass
-                return
-            self._dose_widgets.remove(row_widget)
-            try:
-                if hasattr(self, "dose_rows_layout"):
-                    self.dose_rows_layout.removeWidget(row_widget)
-            except Exception:
-                pass
-            try:
-                row_widget.hide()
-                row_widget.setEnabled(False)
-            except Exception:
-                pass
-            try:
-                QTimer.singleShot(0, row_widget.deleteLater)
-            except Exception:
-                pass
-        except Exception:
-            pass
+        self._remove_row(
+            self._dose_widgets,
+            row_widget,
+            getattr(self, "dose_rows_layout", None),
+            reset_combo=lambda r: getattr(getattr(r, "dose_combo", None), "setCurrentIndex", lambda *_: None)(0),
+        )
 
     def _refresh_tps_lists(self) -> None:
         self._populate_reference_ct_combo()
@@ -1051,16 +951,6 @@ class PrescriptionDoseEstimationWidget(QWidget):
         except Exception:
             pass
 
-    def _remove_node_by_name(self, name: str, class_name: str = None) -> None:
-        if slicer.mrmlScene is None:
-            return
-        node = slicer.mrmlScene.GetFirstNodeByName(name)
-        if node is None:
-            return
-        if class_name and (not node.IsA(class_name)):
-            return
-        self._remove_node_if_present(node)
-
     def _safe_node_name(self, node) -> str:
         if node is None or not hasattr(node, "GetName"):
             return ""
@@ -1200,10 +1090,6 @@ class PrescriptionDoseEstimationWidget(QWidget):
             last_parent = parent
             current = parent
         return last_parent
-
-    def _move_node_to_sh_folder(self, node, folder_item_id):
-        # Backwards-compatible alias.
-        self._ensure_node_in_sh_folder(node, folder_item_id)
 
     def _build_selector_row(self, label_text: str, selector_widget, checkbox: QCheckBox = None) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -1427,6 +1313,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
             "reference_volume": reference_volume,
             "folder_item_id": folder_item_id,
             "temp_nodes": [],
+            "scratch_volume": None,
             "tasks": [],
             "task_index": 0,
             "sum_mag": None,
@@ -1480,6 +1367,14 @@ class PrescriptionDoseEstimationWidget(QWidget):
                         slicer.mrmlScene.RemoveNode(node)
                 except Exception:
                     pass
+            scratch = j.get("scratch_volume", None)
+            if scratch is not None:
+                try:
+                    if slicer.mrmlScene is not None and scratch.GetScene() == slicer.mrmlScene:
+                        slicer.mrmlScene.RemoveNode(scratch)
+                except Exception:
+                    pass
+                j["scratch_volume"] = None
 
         def _fail(msg: str):
             logger.error(str(msg))
@@ -1668,15 +1563,17 @@ class PrescriptionDoseEstimationWidget(QWidget):
                         pass
 
             # Deform dose sample using async CLI (avoid runSync).
-            warped_name = f"{self._safe_node_name(base_dose)}_warped_{uuid4().hex[:6]}"
-            warped_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", warped_name)
-            try:
-                warped_volume.SetHideFromEditors(1)
-                warped_volume.SetSelectable(0)
-                warped_volume.SetSaveWithScene(0)
-            except Exception:
-                pass
-            j["temp_nodes"].append(warped_volume)
+            warped_volume = j.get("scratch_volume", None)
+            if warped_volume is None:
+                warped_name = f"{self._safe_node_name(base_dose)}_warped_tmp"
+                warped_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", warped_name)
+                try:
+                    warped_volume.SetHideFromEditors(1)
+                    warped_volume.SetSelectable(0)
+                    warped_volume.SetSaveWithScene(0)
+                except Exception:
+                    pass
+                j["scratch_volume"] = warped_volume
 
             params = {
                 "inputVolume": base_dose.GetID(),
@@ -1691,15 +1588,11 @@ class PrescriptionDoseEstimationWidget(QWidget):
                 if j2 is None:
                     return
                 try:
-                    arr = slicer.util.arrayFromVolume(warped_volume).astype(np.float64, copy=False)
+                    arr = slicer.util.arrayFromVolume(warped_volume).astype(np.float32, copy=False)
                 except Exception:
                     logger.warning(
                         f"Dose {dose_idx}: Could not read deformed volume for DVF {dvf_idx} (frame {frame_idx})"
                     )
-                    try:
-                        self._remove_node_if_present(warped_volume)
-                    except Exception:
-                        pass
                     try:
                         QTimer.singleShot(0, _tick)
                     except Exception:
@@ -1707,27 +1600,21 @@ class PrescriptionDoseEstimationWidget(QWidget):
                     return
 
                 if j2.get("sum_arr", None) is None:
-                    j2["sum_arr"] = np.array(arr, dtype=np.float64, copy=True)
-                    j2["sumsq_arr"] = np.array(arr * arr, dtype=np.float64, copy=True)
-                    j2["min_arr"] = np.array(arr, dtype=np.float64, copy=True)
-                    j2["max_arr"] = np.array(arr, dtype=np.float64, copy=True)
+                    j2["sum_arr"] = np.array(arr, dtype=np.float32, copy=True)
+                    tmp = np.empty_like(arr)
+                    np.multiply(arr, arr, out=tmp, casting="unsafe")
+                    j2["sumsq_arr"] = tmp
+                    j2["min_arr"] = np.array(arr, dtype=np.float32, copy=True)
+                    j2["max_arr"] = np.array(arr, dtype=np.float32, copy=True)
                 else:
-                    j2["sum_arr"] = j2["sum_arr"] + arr
-                    j2["sumsq_arr"] = j2["sumsq_arr"] + (arr * arr)
-                    j2["min_arr"] = np.minimum(j2["min_arr"], arr)
-                    j2["max_arr"] = np.maximum(j2["max_arr"], arr)
+                    np.add(j2["sum_arr"], arr, out=j2["sum_arr"], casting="unsafe")
+                    tmp = np.empty_like(arr)
+                    np.multiply(arr, arr, out=tmp, casting="unsafe")
+                    np.add(j2["sumsq_arr"], tmp, out=j2["sumsq_arr"], casting="unsafe")
+                    np.minimum(j2["min_arr"], arr, out=j2["min_arr"])
+                    np.maximum(j2["max_arr"], arr, out=j2["max_arr"])
 
                 j2["n_samples"] = int(j2.get("n_samples", 0)) + 1
-
-                try:
-                    self._remove_node_if_present(warped_volume)
-                except Exception:
-                    pass
-
-                try:
-                    j2.get("temp_nodes", []).remove(warped_volume)
-                except Exception:
-                    pass
 
                 try:
                     p = int(5 + (85 * float(i + 1) / float(max(1, n))))

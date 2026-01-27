@@ -1,5 +1,6 @@
 import logging
 from uuid import uuid4
+import os 
 
 import numpy as np
 import slicer
@@ -7,17 +8,11 @@ import vtk
 from qt import (
     QVBoxLayout,
     QHBoxLayout,
-    QGroupBox,
     QLabel,
-    QPushButton,
-    QScrollArea,
     QWidget,
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
-    QLineEdit,
     QMessageBox,
-    QProgressBar,
     QTimer,
 )
 
@@ -36,80 +31,63 @@ class DoseAccumulationWidget(QWidget):
         self._active_job = None
         self._setup_ui()
 
+    # Small UI helpers to reduce repetitive getattr/None checks
+    def _w(self, name):
+        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
+
+    def _layout(self, name):
+        w = self._w(name)
+        return w.layout() if w is not None and hasattr(w, "layout") else None
+
+    def _btn(self, name, cb):
+        btn = self._w(name)
+        if btn is not None and cb:
+            btn.clicked.connect(cb)
+        return btn
+
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout()
+        ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/AccumulationWidget.ui"))
+        ui_widget = slicer.util.loadUI(ui_path)
+        self.ui = slicer.util.childWidgetVariables(ui_widget)
+        self._root_widget = ui_widget
 
-        inputs_group = QGroupBox("1. Fractions / Inputs")
-        inputs_layout = QVBoxLayout()
+        # Bind widgets
+        self.patient_combo = self._w("patient_combo")
+        self.fractions_scroll = self._w("fractions_scroll")
+        self.fractions_container = self._w("fractions_container")
+        self.fractions_container_layout = self._layout("fractions_container")
+        self.strategy_combo = self._w("strategy_combo")
+        self.output_name_edit = self._w("output_name_edit")
+        self.run_btn = self._w("run_btn")
+        self.status_label = self._w("status_label")
+        self.progress_bar = self._w("progress_bar")
 
-        header = QHBoxLayout()
-        header.addWidget(QLabel("Select dose_list outputs (from Phase 1):"))
-        header.addStretch()
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setMaximumWidth(40)
-        refresh_btn.setToolTip("Refresh list")
-        refresh_btn.clicked.connect(self._refresh_all)
-        header.addWidget(refresh_btn)
-        inputs_layout.addLayout(header)
+        # Buttons & signals
+        self._btn("refresh_btn", self._refresh_all)
+        if self.patient_combo is not None:
+            self.patient_combo.currentIndexChanged.connect(self._on_patient_changed)
+        if self.run_btn is not None:
+            self.run_btn.clicked.connect(self._on_compute_accumulation)
 
-        patient_row = QHBoxLayout()
-        patient_row.addWidget(QLabel("Subject / Patient:"))
-        self.patient_combo = QComboBox()
-        self.patient_combo.currentIndexChanged.connect(self._on_patient_changed)
-        patient_row.addWidget(self.patient_combo, 1)
-        inputs_layout.addLayout(patient_row)
+        # Strategy options
+        if self.strategy_combo is not None:
+            self.strategy_combo.clear()
+            self.strategy_combo.addItem("Dose accumulation (Dose Acc only)")
+            self.strategy_combo.addItem("Classic Uncertainty Aware (Dose Acc + Uncertainty)")
+            self.strategy_combo.addItem("Robust uncertainty (remove top-k outliers)")
+            self.strategy_combo.addItem("Continuous anatomy change (e.g., parotids) – uncertainty weighting 0.5→2")
+            self.strategy_combo.addItem("DVF magnitude-driven (anatomy) – uncertainty weighting from dvf_magnitude")
 
-        self.fractions_scroll = QScrollArea()
-        self.fractions_scroll.setWidgetResizable(True)
-        self.fractions_scroll.setMinimumHeight(200)
+        if self.output_name_edit is not None:
+            self.output_name_edit.setText(self._generate_default_output_name())
 
-        self.fractions_container = QWidget()
-        self.fractions_container_layout = QVBoxLayout(self.fractions_container)
-        self.fractions_scroll.setWidget(self.fractions_container)
-        inputs_layout.addWidget(self.fractions_scroll)
+        if self.progress_bar is not None:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
 
-        inputs_group.setLayout(inputs_layout)
-        layout.addWidget(inputs_group)
-
-        options_group = QGroupBox("2. Accumulation options")
-        options_layout = QVBoxLayout()
-
-        strategy_row = QHBoxLayout()
-        strategy_row.addWidget(QLabel("Strategy:"))
-        self.strategy_combo = QComboBox()
-        self.strategy_combo.addItem("Dose accumulation (Dose Acc only)")
-        self.strategy_combo.addItem("Classic Uncertainty Aware (Dose Acc + Uncertainty)")
-        self.strategy_combo.addItem("Robust uncertainty (remove top-k outliers)")
-        self.strategy_combo.addItem("Continuous anatomy change (e.g., parotids) – uncertainty weighting 0.5→2")
-        self.strategy_combo.addItem("DVF magnitude-driven (anatomy) – uncertainty weighting from dvf_magnitude")
-        strategy_row.addWidget(self.strategy_combo, 1)
-        options_layout.addLayout(strategy_row)
-
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("Output base name:"))
-        self.output_name_edit = QLineEdit()
-        self.output_name_edit.setText(self._generate_default_output_name())
-        out_row.addWidget(self.output_name_edit, 1)
-        options_layout.addLayout(out_row)
-
-        self.run_btn = QPushButton("Compute accumulated dose")
-        self.run_btn.clicked.connect(self._on_compute_accumulation)
-        options_layout.addWidget(self.run_btn)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        options_layout.addWidget(self.status_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        options_layout.addWidget(self.progress_bar)
-
-        options_group.setLayout(options_layout)
-        layout.addWidget(options_group)
-
-        layout.addStretch()
+        layout = QVBoxLayout(self)
+        layout.addWidget(ui_widget)
         self.setLayout(layout)
 
         self._refresh_all()
@@ -134,24 +112,9 @@ class DoseAccumulationWidget(QWidget):
             pass
 
     def _set_ui_busy(self, busy: bool) -> None:
+        target = getattr(self, "_root_widget", None) or self
         try:
-            self.run_btn.setEnabled(not bool(busy))
-        except Exception:
-            pass
-        try:
-            self.patient_combo.setEnabled(not bool(busy))
-        except Exception:
-            pass
-        try:
-            self.strategy_combo.setEnabled(not bool(busy))
-        except Exception:
-            pass
-        try:
-            self.output_name_edit.setEnabled(not bool(busy))
-        except Exception:
-            pass
-        try:
-            self.fractions_scroll.setEnabled(not bool(busy))
+            target.setEnabled(not bool(busy))
         except Exception:
             pass
 
@@ -320,19 +283,32 @@ class DoseAccumulationWidget(QWidget):
 
         We check array shape AND IJK->RAS matrix to avoid silently summing mismatched grids.
         """
-        in_arr = slicer.util.arrayFromVolume(input_node)
-        ref_arr = slicer.util.arrayFromVolume(reference_node)
-        if tuple(getattr(in_arr, "shape", ())) != tuple(getattr(ref_arr, "shape", ())):
-            return True
- 
+        if input_node is None or reference_node is None:
+            return False
+
+        # Compare dimensions without loading full voxel arrays.
+        try:
+            in_img = input_node.GetImageData()
+            ref_img = reference_node.GetImageData()
+            in_dims = in_img.GetDimensions() if in_img is not None else None
+            ref_dims = ref_img.GetDimensions() if ref_img is not None else None
+            if in_dims is None or ref_dims is None or in_dims != ref_dims:
+                return True
+        except Exception:
+            pass
+
+        # Compare IJK->RAS matrices.
         m_in = vtk.vtkMatrix4x4()
         m_ref = vtk.vtkMatrix4x4()
-        input_node.GetIJKToRASMatrix(m_in)
-        reference_node.GetIJKToRASMatrix(m_ref)
-        for r in range(4):
-            for c in range(4):
-                if abs(m_in.GetElement(r, c) - m_ref.GetElement(r, c)) > 1e-6:
-                    return True
+        try:
+            input_node.GetIJKToRASMatrix(m_in)
+            reference_node.GetIJKToRASMatrix(m_ref)
+            for r in range(4):
+                for c in range(4):
+                    if abs(m_in.GetElement(r, c) - m_ref.GetElement(r, c)) > 1e-6:
+                        return True
+        except Exception:
+            pass
         return False
 
 
@@ -390,14 +366,6 @@ class DoseAccumulationWidget(QWidget):
             return float(min(max(float(x), float(lo)), float(hi)))
         except Exception:
             return float(lo)
-
-    def _get_attr(self, node, attr_name: str):
-        if node is None or not hasattr(node, "GetAttribute"):
-            return None
-        try:
-            return node.GetAttribute(attr_name)
-        except Exception:
-            return None
 
     def _get_sh_node(self):
         if slicer.mrmlScene is None:
@@ -956,10 +924,10 @@ class DoseAccumulationWidget(QWidget):
                 if idx >= len(items):
                     mags = j2.get("_mags", [])
                     if mags:
-                        m_values = np.array([m for _, m in mags], dtype=np.float64)
+                        m_values = np.array([m for _, m in mags], dtype=np.float32)
                         m_values = m_values[np.isfinite(m_values)]
                     else:
-                        m_values = np.array([], dtype=np.float64)
+                        m_values = np.array([], dtype=np.float32)
 
                     alpha_by_node_id = {}
                     if m_values.size > 0:
@@ -986,7 +954,7 @@ class DoseAccumulationWidget(QWidget):
                     dvf_node = j2["eval"].get(("dvfmag", base), None)
                     if dvf_node is None:
                         raise RuntimeError("skip")
-                    arr = slicer.util.arrayFromVolume(dvf_node).astype(np.float64, copy=False)
+                    arr = slicer.util.arrayFromVolume(dvf_node).astype(np.float32, copy=False)
                     if arr.size == 0:
                         raise RuntimeError("skip")
                     flat = arr.reshape(-1)
@@ -1056,7 +1024,7 @@ class DoseAccumulationWidget(QWidget):
                 eval_dose = j2["eval"].get(("dose", dose_id), dose_list_node)
 
                 try:
-                    arr = slicer.util.arrayFromVolume(eval_dose).astype(np.float64, copy=False)
+                    arr = slicer.util.arrayFromVolume(eval_dose).astype(np.float32, copy=False)
                 except Exception:
                     logger.warning(f"Could not read volume array: {self._safe_node_name(dose_list_node)}")
                     try:
@@ -1066,43 +1034,23 @@ class DoseAccumulationWidget(QWidget):
                     return
 
                 if j2["sum_mean"] is None:
-                    j2["sum_mean"] = np.array(arr, dtype=np.float64, copy=True) * w
+                    j2["sum_mean"] = np.array(arr, dtype=np.float32, copy=True) * np.float32(w)
                 else:
-                    j2["sum_mean"] = j2["sum_mean"] + (arr * w)
+                    j2["sum_mean"] = j2["sum_mean"] + (arr * np.float32(w))
 
                 if j2.get("uncertainty_aware"):
                     base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
                     unc_node = j2["eval"].get(("unc", base), None)
                     if unc_node is not None:
                         try:
-                            std = slicer.util.arrayFromVolume(unc_node).astype(np.float64, copy=False)
-                            alpha = 1.0
-                            if j2.get("uncertainty_ramp"):
-                                # Deterministic ramp across eligible sessions
-                                if "_ramp_ids" not in j2:
-                                    eligible = []
-                                    for node, ww in items:
-                                        if float(ww) <= 0.0:
-                                            continue
-                                        try:
-                                            nid = node.GetID() if hasattr(node, "GetID") else None
-                                        except Exception:
-                                            nid = None
-                                        if nid:
-                                            eligible.append(nid)
-                                    if eligible:
-                                        alphas = np.linspace(0.5, 2.0, num=len(eligible), dtype=np.float64)
-                                        j2["_ramp_ids"] = {nid: float(a) for nid, a in zip(eligible, alphas)}
-                                    else:
-                                        j2["_ramp_ids"] = {}
-                                if dose_id:
-                                    alpha = float(j2.get("_ramp_ids", {}).get(dose_id, 1.0))
-                            if j2.get("dvf_mag_weighting") and dose_id:
-                                alpha = float(j2.get("alpha_by_node_id", {}).get(dose_id, alpha))
+                            std = slicer.util.arrayFromVolume(unc_node).astype(np.float32, copy=False)
+                            # Use precomputed alphas (ramp or DVF magnitude) for consistency.
+                            alpha = float(j2.get("alpha_by_node_id", {}).get(dose_id, 1.0)) if dose_id else 1.0
 
-                            var = np.square(std) * ((w * alpha) * (w * alpha))
+                            scale = np.float32(w * alpha)
+                            var = np.square(std, dtype=np.float32) * (scale * scale)
                             if j2["sum_var"] is None:
-                                j2["sum_var"] = np.array(var, dtype=np.float64, copy=True)
+                                j2["sum_var"] = np.array(var, dtype=np.float32, copy=True)
                             else:
                                 j2["sum_var"] = j2["sum_var"] + var
 
@@ -1112,7 +1060,7 @@ class DoseAccumulationWidget(QWidget):
                                 for jidx in range(len(top_vars2)):
                                     tv = top_vars2[jidx]
                                     if tv is None:
-                                        top_vars2[jidx] = np.array(candidate, dtype=np.float64, copy=True)
+                                        top_vars2[jidx] = np.array(candidate, dtype=np.float32, copy=True)
                                         candidate = None
                                         break
                                     m = candidate > tv
@@ -1159,8 +1107,8 @@ class DoseAccumulationWidget(QWidget):
             self._set_status("Writing outputs…")
             self._set_progress(95, visible=True)
 
-            # Weighted average
-            sum_mean2 = sum_mean2 / float(sum_w2)
+            # Weighted average (stay in float32)
+            sum_mean2 = sum_mean2.astype(np.float32, copy=False) / np.float32(sum_w2)
             sum_var2 = j.get("sum_var", None)
             if j.get("uncertainty_aware") and sum_var2 is not None:
                 if j.get("robust_uncertainty") and (j.get("top_vars") is not None) and int(j.get("n_var_contrib", 0)) >= 2:
@@ -1168,7 +1116,7 @@ class DoseAccumulationWidget(QWidget):
                         if tv is not None:
                             sum_var2 = sum_var2 - tv
                     sum_var2 = np.maximum(sum_var2, 0.0)
-                sum_var2 = sum_var2 / float(sum_w2 * sum_w2)
+                sum_var2 = sum_var2.astype(np.float32, copy=False) / np.float32(sum_w2 * sum_w2)
 
             acc_name = f"dose_acc_{j['output_base_name']}"
             acc_volume = self._create_or_update_volume(acc_name, j["ref_node"], sum_mean2, existing_node=None)
