@@ -5,23 +5,10 @@ import numpy as np
 import slicer
 from slicer.i18n import tr as _
 from slicer.i18n import translate
-from slicer.ScriptedLoadableModule import (
-    ScriptedLoadableModule,
-    ScriptedLoadableModuleLogic,
-    ScriptedLoadableModuleWidget,
-)
-
+from slicer.ScriptedLoadableModule import ScriptedLoadableModule, ScriptedLoadableModuleLogic, ScriptedLoadableModuleWidget
 logger = logging.getLogger(__name__)
 
-from qt import (
-    QTabWidget,
-    QWidget,
-    QLabel,
-    QMessageBox,
-    QFileDialog,
-    QVBoxLayout,
-    QSizePolicy,
-)
+from qt import QTabWidget,QWidget
 
 SERVICE = "ImpactDoseAcc"
 
@@ -92,8 +79,6 @@ class ImpactDoseAcc(ScriptedLoadableModule):
             </p>
             """
         )
-
-
 
 class ImpactDoseAccLogic(ScriptedLoadableModuleLogic):
     """Computation logic for dose deformation and statistics."""

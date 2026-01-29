@@ -1,3 +1,4 @@
+# Import Qt classes nécessaires
 import logging
 from uuid import uuid4
 import os 
@@ -9,20 +10,29 @@ from qt import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QWidget,
     QCheckBox,
     QDoubleSpinBox,
     QMessageBox,
     QTimer,
+    QWidget,
 )
+
+import importlib.util
+from pathlib import Path
+
+base_path = Path(__file__).resolve().parent / "base_widget.py"
+spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
+base_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(base_mod)  # type: ignore
+BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
+
 
 logger = logging.getLogger(__name__)
 
-class DoseAccumulationWidget(QWidget):
-    """UI widget for Phase 2: Dose Accumulation."""
+class DoseAccumulationWidget(BaseImpactWidget):
 
     def __init__(self, logic):
-        super().__init__()
+        super().__init__(logic)
         self.logic = logic
         self._patient_item_id_map = {}
         self._proxy_nodes_by_id = {}
@@ -31,19 +41,6 @@ class DoseAccumulationWidget(QWidget):
         self._active_job = None
         self._setup_ui()
 
-    # Small UI helpers to reduce repetitive getattr/None checks
-    def _w(self, name):
-        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
-
-    def _layout(self, name):
-        w = self._w(name)
-        return w.layout() if w is not None and hasattr(w, "layout") else None
-
-    def _btn(self, name, cb):
-        btn = self._w(name)
-        if btn is not None and cb:
-            btn.clicked.connect(cb)
-        return btn
 
     def _setup_ui(self) -> None:
         ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/AccumulationWidget.ui"))
@@ -225,6 +222,28 @@ class DoseAccumulationWidget(QWidget):
             _cleanup()
             on_error(exc)
 
+    def _find_uncertainty_node(self, base: str):
+        """Find the uncertainty volume corresponding to a Phase-1 output base.
+        """
+        if slicer.mrmlScene is None:
+            return None
+        try:
+            b = str(base or "").strip()
+        except Exception:
+            b = ""
+        if not b:
+            return None
+
+        candidates = (f"uncertainty_{b}", f"uncertainty_dose_{b}")
+        for name in candidates:
+            try:
+                n = slicer.mrmlScene.GetFirstNodeByName(name)
+            except Exception:
+                n = None
+            if n is not None:
+                return n
+        return None
+
     def _finish_job(self, ok: bool, message: str = "") -> None:
         self._active_job = None
         self._set_ui_busy(False)
@@ -336,30 +355,15 @@ class DoseAccumulationWidget(QWidget):
             return ""
         return s[len("dose_list_") :] if s.startswith("dose_list_") else ""
 
-    def _find_uncertainty_node(self, base: str):
-        """Find the uncertainty volume corresponding to a Phase-1 output base.
 
-        Historically, Phase 1 may create uncertainty nodes as `uncertainty_{base}` or
-        `uncertainty_dose_{base}`. Phase 2 should accept both.
-        """
-        if slicer.mrmlScene is None:
-            return None
-        try:
-            b = str(base or "").strip()
-        except Exception:
-            b = ""
-        if not b:
-            return None
-
-        candidates = (f"uncertainty_{b}", f"uncertainty_dose_{b}")
-        for name in candidates:
-            try:
-                n = slicer.mrmlScene.GetFirstNodeByName(name)
-            except Exception:
-                n = None
-            if n is not None:
-                return n
-        return None
+    def _has_uncertainty_for_any_proxy(self, proxies) -> bool:
+        for node in proxies or []:
+            base = self._base_name_from_dose_list(self._safe_node_name(node))
+            if not base:
+                continue
+            if self._find_uncertainty_node(base) is not None:
+                return True
+        return False
 
     def _clip(self, x: float, lo: float, hi: float) -> float:
         try:
@@ -600,6 +604,29 @@ class DoseAccumulationWidget(QWidget):
 
         proxies.sort(key=lambda n: self._safe_node_name(n).lower())
 
+        has_uncertainty = self._has_uncertainty_for_any_proxy(proxies)
+        if self.strategy_combo is not None:
+            try:
+                model = self.strategy_combo.model()
+            except Exception:
+                model = None
+            try:
+                count = self.strategy_combo.count()
+            except Exception:
+                count = 0
+            for i in range(count):
+                try:
+                    item = model.item(i) if model is not None else None
+                    if item is not None:
+                        item.setEnabled(bool(has_uncertainty or i == 0))
+                except Exception:
+                    pass
+            if not has_uncertainty:
+                try:
+                    self.strategy_combo.setCurrentIndex(0)
+                except Exception:
+                    pass
+
         for node in proxies:
             node_id = node.GetID() if hasattr(node, "GetID") else None
             if not node_id:
@@ -735,7 +762,7 @@ class DoseAccumulationWidget(QWidget):
                     eligible.append(node_id)
 
             if eligible:
-                alphas = np.linspace(0.5, 2.0, num=len(eligible), dtype=np.float64)
+                alphas = np.linspace(0.5, 2.0, num=len(eligible), dtype=np.float32)
                 alpha_by_node_id = {nid: float(a) for nid, a in zip(eligible, alphas)}
 
         # Strategy 4 (index 4): anatomy-driven uncertainty weighting based on dvf_magnitude_{base}.

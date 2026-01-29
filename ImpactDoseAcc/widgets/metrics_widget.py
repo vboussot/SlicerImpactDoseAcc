@@ -7,27 +7,21 @@ import inspect
 import numpy as np
 import slicer
 import vtk
-from qt import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QGroupBox,
-    QLabel,
-    QPushButton,
-    QWidget,
-    QCheckBox,
-    QComboBox,
-    QScrollArea,
-    QLineEdit,
-    QMessageBox,
-    QDoubleSpinBox,
-    QProgressBar,
-    QTimer,
-)
+from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
 import logging
 import sys
+from datetime import datetime
 
+import importlib.util
+from pathlib import Path
 
+os.environ["NUMBA_THREADING_LAYER"] = "omp"
 
+base_path = Path(__file__).resolve().parent / "base_widget.py"
+spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
+base_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(base_mod)  # type: ignore
+BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
 
 logging.basicConfig(
     level=(logging.DEBUG),   # DEBUG | INFO | WARNING
@@ -84,32 +78,18 @@ def _ram_available_bytes(fraction: float = 0.8) -> Optional[int]:
         return None
 
 
-class MetricsEvaluationWidget(QWidget):
+class MetricsEvaluationWidget(BaseImpactWidget):
     """UI widget for Phase 3: Metrics & Evaluation."""
 
     def __init__(self, logic):
-        super().__init__()
-        self.logic = logic
+        super().__init__(logic)
         self._ref_dose_node_by_index = {}
         self._out_dose_node_by_index = {}
         self._unc_node_by_index = {}
         self._segment_checkbox_by_id = {}
         self._active_job = None
+        self._pymedphys_preheated = False
         self._setup_ui()
-
-    # Small UI helpers to reduce getattr/None checks
-    def _w(self, name):
-        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
-
-    def _layout(self, widget_name):
-        w = self._w(widget_name)
-        return w.layout() if w is not None and hasattr(w, "layout") else None
-
-    def _btn(self, name, cb):
-        btn = self._w(name)
-        if btn is not None and cb:
-            btn.clicked.connect(cb)
-        return btn
 
     def _setup_ui(self) -> None:
         ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/MetricsWidget.ui"))
@@ -204,7 +184,7 @@ class MetricsEvaluationWidget(QWidget):
 
         if self.output_name_edit is not None:
             try:
-                self.output_name_edit.setText(self._generate_default_output_name())
+                self.output_name_edit.setText(self._generate_default_output_name(prefix="metrics"))
             except Exception:
                 pass
 
@@ -223,6 +203,7 @@ class MetricsEvaluationWidget(QWidget):
         self._refresh_lists()
         self._on_segmentation_changed(self.seg_selector.currentNode() if self.seg_selector is not None else None)
 
+
     def _clear_layout(self, layout) -> None:
         if layout is None:
             return
@@ -234,6 +215,8 @@ class MetricsEvaluationWidget(QWidget):
                     w.setParent(None)
         except Exception:
             pass
+
+    # Preheat removed — do not perform JIT warm-up automatically from the module.
 
     def _on_segmentation_changed(self, seg_node) -> None:
         self._segment_checkbox_by_id = {}
@@ -283,29 +266,7 @@ class MetricsEvaluationWidget(QWidget):
         # spacer
         self._segments_scroll_layout.addStretch()
 
-    def _safe_node_name(self, node) -> str:
-        if node is None or not hasattr(node, "GetName"):
-            return ""
-        try:
-            return node.GetName() or ""
-        except Exception:
-            return ""
 
-    def _is_name_match(self, node, needle: str) -> bool:
-        try:
-            return str(needle).lower() in self._safe_node_name(node).lower()
-        except Exception:
-            return False
-
-    def _combo_current_index(self, combo) -> int:
-        """PythonQt peut exposer currentIndex comme propriété int ou méthode callable."""
-        if combo is None:
-            return 0
-        idx_attr = getattr(combo, "currentIndex", 0)
-        try:
-            return int(idx_attr() if callable(idx_attr) else idx_attr)
-        except Exception:
-            return 0
 
     def _refresh_lists(self) -> None:
         """Refresh filtered lists for reference/output dose and uncertainty."""
@@ -488,19 +449,6 @@ class MetricsEvaluationWidget(QWidget):
         slicer.util.arrayFromVolumeModified(node)
         return node
 
-    def _generate_default_output_name(self) -> str:
-        return f"metrics_{uuid4().hex[:6]}"
-
-    def _line_edit_text(self, line_edit) -> str:
-        if line_edit is None:
-            return ""
-        text_attr = getattr(line_edit, "text", "")
-        try:
-            val = text_attr() if callable(text_attr) else text_attr
-            return "" if val is None else str(val)
-        except Exception:
-            return ""
-
     def _float_from_line_edit(self, line_edit, default: float) -> float:
         # Supports both QLineEdit-like widgets and QDoubleSpinBox.
         if line_edit is None:
@@ -543,26 +491,6 @@ class MetricsEvaluationWidget(QWidget):
             return slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
         except Exception:
             return None
-
-    def _set_status(self, text: str) -> None:
-        try:
-            self.status_label.setText(text or "")
-        except Exception:
-            pass
-
-    def _set_progress(self, value, visible: bool = True) -> None:
-        try:
-            if not hasattr(self, "progress_bar") or self.progress_bar is None:
-                return
-            if value is None:
-                # Indeterminate
-                self.progress_bar.setRange(0, 0)
-            else:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(int(max(0, min(100, value))))
-            self.progress_bar.setVisible(bool(visible))
-        except Exception:
-            pass
 
     def _set_ui_busy(self, busy: bool) -> None:
         try:
@@ -979,7 +907,7 @@ class MetricsEvaluationWidget(QWidget):
             )
             return
 
-        out_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name()
+        out_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name(prefix="metrics")
         table_node = self._create_or_get_table_node(out_name)
         if table_node is None:
             QMessageBox.warning(self, "Output Error", "Could not create output table node.")
@@ -1158,16 +1086,16 @@ class MetricsEvaluationWidget(QWidget):
                     lower_percent_dose_cutoff = float(params.get("lower_percent_dose_cutoff", 30.0))
                     local_gamma = bool(params.get("local_gamma", False))
                     interp_fraction = int(params.get("interp_fraction", 3))
-                    max_gamma = float(params.get("max_gamma", 1))
+                    max_gamma = float(params.get("max_gamma", 2))
 
                     z0, z1, y0, y1, x0, x1 = job.get("_gamma_bbox")
                     # Ensure contiguous crops for Numba kernels (can have a big perf impact).
                     ref_crop = np.ascontiguousarray(job["_ref_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
                     out_crop = np.ascontiguousarray(job["_out_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
                     # Build only the cropped axes to reduce allocations.
-                    zc = (np.arange(z0, z1, dtype=np.float64) * sz)
-                    yc = (np.arange(y0, y1, dtype=np.float64) * sy)
-                    xc = (np.arange(x0, x1, dtype=np.float64) * sx)
+                    zc = (np.arange(z0, z1, dtype=np.float32) * sz)
+                    yc = (np.arange(y0, y1, dtype=np.float32) * sy)
+                    xc = (np.arange(x0, x1, dtype=np.float32) * sx)
                     axes_crop = (zc, yc, xc)
                     gamma_fn = pymedphys.gamma
 

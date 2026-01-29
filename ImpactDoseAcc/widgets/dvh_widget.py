@@ -5,10 +5,18 @@ import numpy as np
 import os
 import slicer
 import vtk
-from qt import QVBoxLayout, QWidget, QCheckBox, QMessageBox, QTimer
+from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
+import importlib.util
+from pathlib import Path
+
+base_path = Path(__file__).resolve().parent / "base_widget.py"
+spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
+base_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(base_mod)  # type: ignore
+BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
 
 
-class DVHWidget(QWidget):
+class DVHWidget(BaseImpactWidget):
     """UI widget for Phase 4: DVH.
 
     Features:
@@ -32,19 +40,6 @@ class DVHWidget(QWidget):
         self._last_out_base = None
         self._setup_ui()
 
-    # Small UI helpers to reduce repetitive getattr/None checks
-    def _w(self, name):
-        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
-
-    def _layout(self, widget_name):
-        w = self._w(widget_name)
-        return w.layout() if w is not None and hasattr(w, "layout") else None
-
-    def _btn(self, name, cb):
-        btn = self._w(name)
-        if btn is not None and cb:
-            btn.clicked.connect(cb)
-        return btn
 
     def _generate_default_output_name(self) -> str:
         return f"dvh_{uuid4().hex[:6]}"
@@ -70,7 +65,6 @@ class DVHWidget(QWidget):
         self.status_label = self._w("status_label")
         self.progress_bar = self._w("progress_bar")
         self.plot_widget = self._w("plot_widget")
-        self.show_png_btn = self._w("show_png_btn")
         self.legend_group = self._w("legend_group")
         self.legend_label = self._w("legend_label")
 
@@ -92,7 +86,7 @@ class DVHWidget(QWidget):
                 self.run_btn.clicked.connect(self._on_compute_dvh)
             except Exception:
                 pass
-        self._btn("show_png_btn", self._on_show_png)
+        # show_png_btn removed
         try:
             if self.seg_selector is not None:
                 self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
@@ -116,11 +110,7 @@ class DVHWidget(QWidget):
                 self.cb_unc_b.setEnabled(False)
         except Exception:
             pass
-        try:
-            if self.show_png_btn is not None:
-                self.show_png_btn.setEnabled(False)
-        except Exception:
-            pass
+        # show_png_btn removed
 
         if self.output_name_edit is not None:
             try:
@@ -155,7 +145,7 @@ class DVHWidget(QWidget):
         self._refresh_dose_lists()
         self._on_segmentation_changed(self.seg_selector.currentNode() if self.seg_selector is not None else None)
         self._on_dose_selection_changed()
-        self._update_legend(structure_items=[], dose_scale=1.0)
+        self._update_legend(structure_items=[])
 
     def _set_plot_chart_on_widget(self, chart_node) -> None:
         if self.plot_widget is None or chart_node is None:
@@ -254,29 +244,12 @@ class DVHWidget(QWidget):
         except Exception:
             return "#000000"
 
-    def _update_legend(self, structure_items, dose_scale: float = 1.0):
+    def _update_legend(self, structure_items):
         """Update custom legend.
 
         structure_items: list of dicts with keys: name, color(rgb01)
         """
         try:
-            try:
-                s = float(dose_scale)
-            except Exception:
-                s = 1.0
-            scale_txt = "×1"
-            try:
-                if s > 0 and abs(s - 1.0) > 1e-12:
-                    inv = 1.0 / float(s)
-                    # Prefer ÷10^n when close to a power of 10.
-                    n = int(round(np.log10(inv))) if inv > 0 else 0
-                    if n > 0 and abs(inv - (10.0 ** n)) < 1e-6:
-                        scale_txt = f"÷1e{n}"
-                    else:
-                        scale_txt = f"×{s:g}"
-            except Exception:
-                scale_txt = "×1"
-
             structure_lines = []
             for it in structure_items or []:
                 name = str(it.get("name", ""))
@@ -358,22 +331,6 @@ class DVHWidget(QWidget):
             except Exception:
                 pass
 
-    def _safe_node_name(self, node) -> str:
-        if node is None or not hasattr(node, "GetName"):
-            return ""
-        try:
-            return node.GetName() or ""
-        except Exception:
-            return ""
-
-    def _combo_current_index(self, combo) -> int:
-        if combo is None:
-            return 0
-        idx_attr = getattr(combo, "currentIndex", 0)
-        try:
-            return int(idx_attr() if callable(idx_attr) else idx_attr)
-        except Exception:
-            return 0
 
     def _selected_dose_node_a(self):
         try:
@@ -532,48 +489,7 @@ class DVHWidget(QWidget):
             return [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
         except Exception:
             return []
-
-    def _on_show_png(self):
-        path = getattr(self, "_last_png_path", None)
-        if not path or not os.path.exists(path):
-            try:
-                QMessageBox.information(self, "DVH", "No PNG available yet.")
-            except Exception:
-                pass
-            return
-        name = "dvh_png"
-        try:
-            if self._last_out_base:
-                name = f"{self._last_out_base}_png"
-            elif self._active_job and self._active_job.get("out_base"):
-                name = f"{self._active_job.get('out_base')}_png"
-        except Exception:
-            pass
-        node = self._load_png_node(path, name)
-        if node is None:
-            return
-        try:
-            lm = slicer.app.layoutManager()
-            if lm is not None:
-                try:
-                    lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
-                except Exception:
-                    pass
-                for view_name in ("Red", "Yellow", "Green"):
-                    try:
-                        sw = lm.sliceWidget(view_name)
-                        if sw is None:
-                            continue
-                        comp = sw.sliceLogic().GetSliceCompositeNode()
-                        comp.SetBackgroundVolumeID(node.GetID())
-                    except Exception:
-                        pass
-                try:
-                    lm.resetSliceViews()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    # show_png removed per user request
 
     def _load_png_node(self, path: str, name: str):
         if slicer.mrmlScene is None or not path or not os.path.exists(path):
@@ -595,24 +511,37 @@ class DVHWidget(QWidget):
                     return existing
                 except Exception:
                     pass
-            # Fallback: remove and reload to avoid stale content
+            # Fallback: remove display/storage nodes then node to avoid VTK pipeline warnings
             try:
                 if existing.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(existing)
+                    try:
+                        dn = existing.GetDisplayNode() if hasattr(existing, "GetDisplayNode") else None
+                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(dn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    try:
+                        sn = existing.GetStorageNode() if hasattr(existing, "GetStorageNode") else None
+                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(sn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    try:
+                        slicer.mrmlScene.RemoveNode(existing)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
         try:
             n = slicer.util.loadVolume(path, properties={"name": name})
             return n
-        except Exception:
-            return None
-
-    def _get_sh_node(self):
-        if slicer.mrmlScene is None:
-            return None
-        try:
-            return slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
         except Exception:
             return None
 
@@ -743,7 +672,28 @@ class DVHWidget(QWidget):
         finally:
             try:
                 if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(labelmap)
+                    try:
+                        dn = labelmap.GetDisplayNode() if hasattr(labelmap, "GetDisplayNode") else None
+                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(dn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    try:
+                        sn = labelmap.GetStorageNode() if hasattr(labelmap, "GetStorageNode") else None
+                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(sn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    try:
+                        slicer.mrmlScene.RemoveNode(labelmap)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -813,14 +763,11 @@ class DVHWidget(QWidget):
             "seg_color_by_id": {},
         }
 
+
         self._last_out_base = out_base
 
         self._last_png_path = None
-        try:
-            if self.show_png_btn is not None:
-                self.show_png_btn.setEnabled(False)
-        except Exception:
-            pass
+        # show_png button removed
 
         self._set_ui_busy(True)
         self._set_status("Preparing…")
@@ -832,8 +779,39 @@ class DVHWidget(QWidget):
                 return
             for tn in j.get("temp_nodes", []):
                 try:
-                    if tn is not None and slicer.mrmlScene is not None and tn.GetScene() == slicer.mrmlScene:
+                    if tn is None or slicer.mrmlScene is None:
+                        continue
+                    try:
+                        in_scene = tn.GetScene() == slicer.mrmlScene
+                    except Exception:
+                        in_scene = False
+                    if not in_scene:
+                        continue
+                    # Remove display node(s) first to avoid VTK pipeline warnings.
+                    try:
+                        dn = tn.GetDisplayNode() if hasattr(tn, "GetDisplayNode") else None
+                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(dn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Remove storage node if present.
+                    try:
+                        sn = tn.GetStorageNode() if hasattr(tn, "GetStorageNode") else None
+                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
+                            try:
+                                slicer.mrmlScene.RemoveNode(sn)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Finally remove the temp node itself.
+                    try:
                         slicer.mrmlScene.RemoveNode(tn)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -1381,11 +1359,7 @@ class DVHWidget(QWidget):
                 if png_path:
                     j2["png_path"] = png_path
                     self._last_png_path = png_path
-                    try:
-                        if self.show_png_btn is not None:
-                            self.show_png_btn.setEnabled(True)
-                    except Exception:
-                        pass
+                    # show_png_btn removed
             except Exception:
                 pass
 
@@ -1421,7 +1395,7 @@ class DVHWidget(QWidget):
                 series_index = 0
                 created_series_nodes = []
 
-                def _add_line_series(y_col: str, rgb, name_suffix: str, width: int, dashed: bool, opacity=None) -> None:
+                def _add_line_series(y_col: str, rgb, name_suffix: str, width: int, dashed: bool, opacity=None, label=None) -> None:
                     nonlocal series_index
                     sname = f"{table_name}_{series_index:02d}_{name_suffix}"
                     series_index += 1
@@ -1469,6 +1443,8 @@ class DVHWidget(QWidget):
                             self._apply_series_opacity(s, float(opacity))
                         except Exception:
                             pass
+                    # Set readable series name/title for legend
+                    # series naming omitted: legend handled in _update_legend
                     try:
                         s.Modified()
                     except Exception:
@@ -1488,10 +1464,14 @@ class DVHWidget(QWidget):
                     dose_label = str(c.get("dose_label", ""))
                     rgb = c.get("color", None) or (0.0, 0.0, 0.0)
                     dashed = (dose_label == "B")
+                    try:
+                        struct_label = str(c.get("seg_name", "") or "")
+                    except Exception:
+                        struct_label = ""
                     if "sigma" in kind:
-                        _add_line_series(col_vpct, rgb, "unc", width=2, dashed=False, opacity=0.35)
+                        _add_line_series(col_vpct, rgb, "unc", width=2, dashed=False, opacity=0.35, label=struct_label)
                     else:
-                        _add_line_series(col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None)
+                        _add_line_series(col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None, label=struct_label)
 
 
                 chart_node.SetTitle(table_name)
@@ -1513,6 +1493,29 @@ class DVHWidget(QWidget):
                             pass
 
                 self._set_plot_chart_on_widget(chart_node)
+
+                # Build custom legend items from computed curves (unique structures)
+                try:
+                    structure_items = []
+                    seen = set()
+                    for c in list(curves):
+                        try:
+                            name = str(c.get("seg_name", "") or "")
+                        except Exception:
+                            name = ""
+                        try:
+                            color = c.get("color", None) or (0.0, 0.0, 0.0)
+                        except Exception:
+                            color = (0.0, 0.0, 0.0)
+                        if name and name not in seen:
+                            seen.add(name)
+                            structure_items.append({"name": name, "color": color})
+                    try:
+                        self._update_legend(structure_items=structure_items)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
 
                 # Move created nodes into a SubjectHierarchy folder to reduce node clutter.
                 try:

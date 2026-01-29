@@ -175,48 +175,29 @@
       </item>
 
       <!-- Buttons -->
-      <item>
-       <layout class="QHBoxLayout" name="buttons_row">
-         <item>
-          <widget class="QPushButton" name="run_btn">
-           <property name="sizePolicy">
+        <item>
+        <layout class="QHBoxLayout" name="buttons_row">
+        <item>
+        <widget class="QPushButton" name="run_btn">
+            <property name="sizePolicy">
             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-             <horstretch>1</horstretch>
-             <verstretch>0</verstretch>
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
             </sizepolicy>
-           </property>
-           <property name="minimumHeight">
+            </property>
+            <property name="minimumHeight">
             <number>36</number>
-           </property>
-           <property name="text">
+            </property>
+            <property name="text">
             <string>Compute DVH</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="show_png_btn">
-           <property name="sizePolicy">
-            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-             <horstretch>1</horstretch>
-             <verstretch>0</verstretch>
-            </sizepolicy>
-           </property>
-           <property name="minimumHeight">
-            <number>36</number>
-           </property>
-           <property name="text">
-            <string>Show PNG</string>
-           </property>
-           <property name="toolTip">
-            <string>Afficher l'image DVH générée (PNG) dans le viewer</string>
-           </property>
-          </widget>
-         </item>
-         <property name="stretch">
-          <string>1,1</string>
-         </property>
-       </layout>
-      </item>
+            </property>
+        </widget>
+        </item>
+        <property name="stretch">
+        <string>1</string>
+        </property>
+        </layout>
+        </item>
 
       <!-- Status + progress -->
       <item>

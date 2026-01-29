@@ -1,22 +1,23 @@
-from qt import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QComboBox,
-    QCheckBox,
-    QFileDialog,
-    QWidget,
-    QMessageBox,
-    QTimer,
-)
-import os
-import slicer
 import logging
 import vtk
 import numpy as np
 from uuid import uuid4
 logger = logging.getLogger(__name__)
+
+# Importer slicer et qt AVANT tout import dynamique
+import slicer
+from qt import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QCheckBox, QFileDialog, QWidget, QMessageBox, QTimer
+
+# Import robuste de BaseImpactWidget, compatible exécution directe et import dynamique
+import importlib.util
+import os
+from pathlib import Path
+
+base_path = Path(__file__).resolve().parent / "base_widget.py"
+spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
+base_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(base_mod)  # type: ignore
+BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
 
 
 class DvfSelectorRow(QWidget):
@@ -24,7 +25,6 @@ class DvfSelectorRow(QWidget):
 
     Supports native TransformNodes and transform sequences.
     """
-
     def __init__(self, on_add=None, on_remove=None):
         super().__init__()
         self._dvf_node = None
@@ -259,7 +259,7 @@ class DoseSelectorRow(QWidget):
         return self._dose_node
 
 
-class PrescriptionDoseEstimationWidget(QWidget):
+class PrescriptionDoseEstimationWidget(BaseImpactWidget):
     """UI widget for Phase 1: Delivered Dose Estimation."""
 
     def __init__(
@@ -271,10 +271,9 @@ class PrescriptionDoseEstimationWidget(QWidget):
         deform_callback=None,
         refresh_sessions_callback=None,
     ):
-        super().__init__()
+        super().__init__(logic)
         # create a logger for this widget
         self._logger = logging.getLogger(self.__class__.__name__)
-        self.logic = logic
         self._session_widgets = []
         self._dose_widgets = []
         self.export_dir = ""
@@ -295,20 +294,6 @@ class PrescriptionDoseEstimationWidget(QWidget):
         self._deform_callback = deform_callback
         self._refresh_sessions_callback = refresh_sessions_callback
         self._setup_ui()
-
-    # Small helpers to reduce repetitive getattr/None checks
-    def _w(self, name):
-        return getattr(self.ui, name, None) if hasattr(self, "ui") else None
-
-    def _layout(self, name):
-        w = self._w(name)
-        return w.layout() if w is not None and hasattr(w, "layout") else None
-
-    def _btn(self, name, cb):
-        btn = self._w(name)
-        if btn is not None and cb:
-            btn.clicked.connect(cb)
-        return btn
 
     def _remove_row(self, row_list: list, row_widget, layout, reset_combo=None):
         if row_widget not in row_list:
@@ -354,6 +339,12 @@ class PrescriptionDoseEstimationWidget(QWidget):
         self.export_dir_display = self._w("export_dir_display")
         if self.export_dir_display:
             self.export_dir_display.setStyleSheet("color: gray;")
+
+        if self.output_name_edit is not None:
+            try:
+                self.output_name_edit.setText(self._generate_default_output_name(prefix="session"))
+            except Exception:
+                pass
 
         # Buttons
         self._btn("refresh_tps_btn", self._refresh_tps_lists)
@@ -406,33 +397,6 @@ class PrescriptionDoseEstimationWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(ui_widget)
         self.setLayout(layout)
-
-    def _set_status(self, text: str) -> None:
-        try:
-            if self.status_label is not None:
-                self.status_label.setText(text or "")
-        except Exception:
-            pass
-
-    def _set_progress(self, value, visible: bool = True) -> None:
-        try:
-            if self.progress_bar is None:
-                return
-            if value is None:
-                self.progress_bar.setRange(0, 0)
-            else:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(int(max(0, min(100, value))))
-            self.progress_bar.setVisible(bool(visible))
-        except Exception:
-            pass
-
-    def _set_ui_busy(self, busy: bool) -> None:
-        target = getattr(self, "_root_widget", None) or self
-        try:
-            target.setEnabled(not bool(busy))
-        except Exception:
-            pass
 
     def _finish_job(self, ok: bool, message: str = "") -> None:
         self._active_job = None
@@ -828,12 +792,12 @@ class PrescriptionDoseEstimationWidget(QWidget):
                     if out is None:
                         continue
                     try:
-                        returned_arr = slicer.util.arrayFromVolume(out).astype(np.float64, copy=False)
+                        returned_arr = slicer.util.arrayFromVolume(out).astype(np.float32, copy=False)
                     except Exception:
                         returned_arr = None
                     try:
                         if out.GetScene() == slicer.mrmlScene:
-                            self._remove_node_if_present(out)
+                            self.safe_remove(out)
                     except Exception:
                         pass
                     if returned_arr is not None:
@@ -863,7 +827,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
         arr = None
         try:
             if disp_node.GetImageData() is not None:
-                arr = slicer.util.arrayFromVolume(disp_node).astype(np.float64, copy=False)
+                arr = slicer.util.arrayFromVolume(disp_node).astype(np.float32, copy=False)
         except Exception:
             arr = None
 
@@ -894,7 +858,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
                     continue
                 try:
                     if node.IsA("vtkMRMLVectorVolumeNode"):
-                        arr = slicer.util.arrayFromVolume(node).astype(np.float64, copy=False)
+                        arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
                         break
                 except Exception:
                     continue
@@ -908,7 +872,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
                     continue
                 try:
                     if node.IsA("vtkMRMLScalarVolumeNode") and "displacement magnitude" in (node.GetName() or "").lower():
-                        arr = slicer.util.arrayFromVolume(node).astype(np.float64, copy=False)
+                        arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
                         break
                 except Exception:
                     continue
@@ -930,34 +894,9 @@ class PrescriptionDoseEstimationWidget(QWidget):
                         slicer.mrmlScene.RemoveNode(dn)
                 except Exception:
                     pass
-                self._remove_node_if_present(node)
+                self.safe_remove(node)
 
         return arr
-
-    def _get_sh_node(self):
-        if slicer.mrmlScene is None:
-            return None
-        try:
-            return slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-        except Exception:
-            return None
-
-    def _remove_node_if_present(self, node) -> None:
-        if node is None or slicer.mrmlScene is None:
-            return
-        try:
-            if node.GetScene() == slicer.mrmlScene:
-                slicer.mrmlScene.RemoveNode(node)
-        except Exception:
-            pass
-
-    def _safe_node_name(self, node) -> str:
-        if node is None or not hasattr(node, "GetName"):
-            return ""
-        try:
-            return node.GetName() or ""
-        except Exception:
-            return ""
 
     def _name_contains_dose(self, name: str) -> bool:
         try:
@@ -988,24 +927,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
     def _is_dicom_volume(self, node) -> bool:
         return self._is_rtdose(node) or self._is_dicom(node)
 
-    def _line_edit_text(self, line_edit) -> str:
-        if line_edit is None:
-            return ""
-        text_attr = getattr(line_edit, "text", "")
-        try:
-            return text_attr() if callable(text_attr) else str(text_attr)
-        except Exception:
-            return ""
 
-    def _combo_current_index(self, combo) -> int:
-        """Return currentIndex from a QComboBox in a PythonQt-safe way."""
-        if combo is None:
-            return 0
-        idx_attr = getattr(combo, "currentIndex", 0)
-        try:
-            return int(idx_attr() if callable(idx_attr) else idx_attr)
-        except Exception:
-            return 0
 
     def _safe_path_component(self, text: str, fallback: str = "item") -> str:
         """Sanitize a string for use as a directory name."""
@@ -1534,7 +1456,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
                     try:
                         disp = self._displacement_array_from_transform(dvf_to_use, j["reference_volume"], j["temp_nodes"])
                         if disp is not None:
-                            disp_arr = np.array(disp, dtype=np.float64, copy=False)
+                            disp_arr = np.array(disp, dtype=np.float32, copy=False)
                             if disp_arr.ndim == 4 and disp_arr.shape[-1] == 3:
                                 mag_i = np.sqrt(np.sum(np.square(disp_arr), axis=-1))
                             elif disp_arr.ndim == 4 and disp_arr.shape[0] == 3:
@@ -1547,7 +1469,7 @@ class PrescriptionDoseEstimationWidget(QWidget):
 
                             if mag_i is not None:
                                 if j.get("sum_mag", None) is None:
-                                    j["sum_mag"] = np.array(mag_i, dtype=np.float64, copy=True)
+                                    j["sum_mag"] = np.array(mag_i, dtype=np.float32, copy=True)
                                 else:
                                     j["sum_mag"] = j["sum_mag"] + mag_i
                                 j["n_mag"] = int(j.get("n_mag", 0)) + 1
