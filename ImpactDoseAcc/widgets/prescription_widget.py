@@ -2,23 +2,20 @@ import logging
 import vtk
 import numpy as np
 from uuid import uuid4
-logger = logging.getLogger(__name__)
-
-# Importer slicer et qt AVANT tout import dynamique
 import slicer
 from qt import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QCheckBox, QFileDialog, QWidget, QMessageBox, QTimer
 
-# Import robuste de BaseImpactWidget, compatible exécution directe et import dynamique
 import importlib.util
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 base_path = Path(__file__).resolve().parent / "base_widget.py"
 spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
 base_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base_mod)  # type: ignore
 BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
-
 
 class DvfSelectorRow(QWidget):
     """UI row for selecting a single DVF sample.
@@ -64,19 +61,15 @@ class DvfSelectorRow(QWidget):
             pass
 
     def _on_remove_clicked(self) -> None:
-        # Avoid deleting Qt objects in the middle of the clicked() callback.
+        if not callable(self._on_remove):
+            return
         try:
-            if not callable(self._on_remove):
-                return
-            try:
-                def _do_remove():
-                    self._on_remove(self)
-
-                QTimer.singleShot(0, _do_remove)
-            except Exception:
+            def _do_remove():
                 self._on_remove(self)
+            QTimer.singleShot(0, _do_remove)
         except Exception:
-            pass
+            self._on_remove(self)
+
 
     def _populate_dvf_options(self) -> None:
         self.dvf_combo.clear()
@@ -94,28 +87,17 @@ class DvfSelectorRow(QWidget):
                 return ""
 
         def _is_internal_slice_transform_name(name: str) -> bool:
-            # Slicer commonly has internal slice view transforms: "Red Transform", "Yellow Transform", "Green Transform".
-            # They are not DVFs and would confuse the user.
-            try:
-                n = str(name).strip().lower()
-            except Exception:
-                return False
+            n = str(name).strip().lower()
             return n in ("red transform", "yellow transform", "green transform")
 
         # Transform nodes (DVFs)
         transform_nodes = []
         if hasattr(slicer.util, "getNodesByClass"):
-            try:
-                tn = slicer.util.getNodesByClass("vtkMRMLTransformNode")
-                transform_nodes = list(tn.values()) if isinstance(tn, dict) else list(tn)
-            except Exception:
-                transform_nodes = []
+            tn = slicer.util.getNodesByClass("vtkMRMLTransformNode")
+            transform_nodes = list(tn.values()) if isinstance(tn, dict) else list(tn)
         else:
-            try:
-                tn = slicer.mrmlScene.GetNodesByClass("vtkMRMLTransformNode")
-                transform_nodes = [tn.GetItemAsObject(i) for i in range(tn.GetNumberOfItems())]
-            except Exception:
-                transform_nodes = []
+            tn = slicer.mrmlScene.GetNodesByClass("vtkMRMLTransformNode")
+            transform_nodes = [tn.GetItemAsObject(i) for i in range(tn.GetNumberOfItems())]
 
         for node in sorted([n for n in transform_nodes if n is not None], key=lambda n: _safe_name(n).lower()):
             node_name = _safe_name(node)
@@ -152,7 +134,6 @@ class DvfSelectorRow(QWidget):
         return self._dvf_node
 
     def get_dvf_type(self):
-        # PythonQt can expose QComboBox.currentIndex as an int property or a callable.
         idx_attr = getattr(self.dvf_combo, "currentIndex", 0)
         try:
             current_index = idx_attr() if callable(idx_attr) else int(idx_attr)
@@ -170,7 +151,6 @@ class DoseSelectorRow(QWidget):
 
     Multiple rows can be added to select multiple doses.
     """
-
     def __init__(self, is_rtdose_cb, on_add=None, on_remove=None):
         super().__init__()
         self._is_rtdose = is_rtdose_cb
@@ -237,10 +217,8 @@ class DoseSelectorRow(QWidget):
         volume_nodes = slicer.util.getNodes("vtkMRMLScalarVolumeNode*")
         combo_index = 1
         for node_name, node in volume_nodes.items():
-            try:
-                name_l = str(node_name or "").lower()
-            except Exception:
-                name_l = ""
+            name_l = str(node_name or "").lower()
+
             if "uncertainty" in name_l or "dvf_magnitude" in name_l:
                 continue
             try:
@@ -927,8 +905,6 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
     def _is_dicom_volume(self, node) -> bool:
         return self._is_rtdose(node) or self._is_dicom(node)
 
-
-
     def _safe_path_component(self, text: str, fallback: str = "item") -> str:
         """Sanitize a string for use as a directory name."""
         try:
@@ -1182,15 +1158,10 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
 
     def _on_deform_and_compute(self):
-        # Non-blocking implementation: sequential async CLIs + QTimer stepping.
         if self._active_job is not None:
-            try:
-                QMessageBox.information(self, "Busy", "A computation is already running.")
-            except Exception:
-                pass
+            QMessageBox.information(self, "Busy", "A computation is already running.")
             return
 
-        # Temporarily silence noisy VTK warnings during the deformation pipeline.
         prev_warn = None
         try:
             prev_warn = vtk.vtkObject.GetGlobalWarningDisplay()
