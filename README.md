@@ -1,6 +1,6 @@
 # 🧠 Slicer IMPACT-DoseAcc
 
-<img src="ImpactDoseAcc.png" alt="IMPACT reg Logo" width="100" align="right">
+<img src="ImpactDoseAcc.png" alt="IMPACT reg Logo" width="150" align="right">
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/vboussot/IMPACTDoseacc/blob/main/LICENSE)
 
