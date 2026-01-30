@@ -9,6 +9,7 @@ import slicer
 import vtk
 from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
 import logging
+logger = logging.getLogger(__name__)
 import sys
 from datetime import datetime
 
@@ -100,7 +101,9 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         # Bind widgets
         self.ref_dose_combo = self._w("ref_dose_combo")
         self.out_dose_combo = self._w("out_dose_combo")
-        self.unc_combo = self._w("unc_combo")
+        # Output uncertainty: checkbox enabled only when an uncertainty volume exists in the same folder as the output dose
+        self.cb_unc_out = self._w("cb_unc_out")
+        self._unc_node_by_index = {}  # kept for compatibility but not used when using folder-based uncertainty
         self.seg_selector = self._w("seg_selector")
         self.output_name_edit = self._w("output_name_edit")
         self.cb_dose_mean = self._w("cb_dose_mean")
@@ -143,12 +146,18 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             try:
                 self.run_btn.clicked.connect(self._on_compute_metrics)
             except Exception:
-                pass
+                logger.exception("Failed to connect run button")
         if self.seg_selector is not None:
             try:
                 self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
             except Exception:
-                pass
+                logger.exception("Failed to connect segmentation selector")
+        # Wire output dose selection changes to update uncertainty checkbox eligibility
+        try:
+            if self.out_dose_combo is not None:
+                self.out_dose_combo.currentIndexChanged.connect(self._on_out_dose_changed)
+        except Exception:
+            logger.exception("Failed to connect out dose combo change")
 
         # Checkbox defaults (gamma off by default)
         for cb in (
@@ -183,18 +192,13 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         _sync_gamma_params_visibility()
 
         if self.output_name_edit is not None:
-            try:
-                self.output_name_edit.setText(self._generate_default_output_name(prefix="metrics"))
-            except Exception:
-                pass
+            self.output_name_edit.setText(self._generate_default_output_name(prefix="metrics"))
 
         if self.progress_bar is not None:
-            try:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(0)
-                self.progress_bar.setVisible(False)
-            except Exception:
-                pass
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
+
 
         layout = QVBoxLayout(self)
         layout.addWidget(ui_widget)
@@ -212,9 +216,13 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 item = layout.takeAt(0)
                 w = item.widget() if item is not None else None
                 if w is not None:
-                    w.setParent(None)
+                    try:
+                        w.setParent(None)
+                        w.deleteLater()
+                    except Exception:
+                        logger.exception("Failed to remove widget from layout")
         except Exception:
-            pass
+            logger.exception("_clear_layout failed")
 
     # Preheat removed — do not perform JIT warm-up automatically from the module.
 
@@ -226,7 +234,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             try:
                 self._segments_group.setEnabled(False)
             except Exception:
-                pass
+                logger.exception("Failed disabling segments group")
             return
 
         try:
@@ -276,7 +284,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         # Keep current selections by node ID if possible.
         ref_prev = None
         out_prev = None
-        unc_prev = None
         try:
             ref_prev = self._ref_dose_node_by_index.get(self._combo_current_index(self.ref_dose_combo), None)
         except Exception:
@@ -285,10 +292,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             out_prev = self._out_dose_node_by_index.get(self._combo_current_index(self.out_dose_combo), None)
         except Exception:
             out_prev = None
-        try:
-            unc_prev = self._unc_node_by_index.get(self._combo_current_index(self.unc_combo), None)
-        except Exception:
-            unc_prev = None
+
 
         def node_id(n):
             try:
@@ -298,22 +302,19 @@ class MetricsEvaluationWidget(BaseImpactWidget):
 
         ref_prev_id = node_id(ref_prev)
         out_prev_id = node_id(out_prev)
-        unc_prev_id = node_id(unc_prev)
 
         self.ref_dose_combo.blockSignals(True)
         self.out_dose_combo.blockSignals(True)
-        self.unc_combo.blockSignals(True)
 
         self.ref_dose_combo.clear()
         self.out_dose_combo.clear()
-        self.unc_combo.clear()
+
         self._ref_dose_node_by_index = {0: None}
         self._out_dose_node_by_index = {0: None}
         self._unc_node_by_index = {0: None}
 
         self.ref_dose_combo.addItem("[Select reference dose]")
         self.out_dose_combo.addItem("[Select output dose]")
-        self.unc_combo.addItem("[None]")
 
         # Filter volumes by name.
         try:
@@ -333,15 +334,12 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             for n in volumes
             if n is not None and self._is_name_match(n, "dose") and not self._is_name_match(n, "uncertainty")
         ]
-        unc_nodes = [n for n in volumes if n is not None and self._is_name_match(n, "uncertainty")]
 
         dose_nodes_ref.sort(key=lambda n: self._safe_node_name(n).lower())
         dose_nodes_out.sort(key=lambda n: self._safe_node_name(n).lower())
-        unc_nodes.sort(key=lambda n: self._safe_node_name(n).lower())
 
         ref_match_index = 0
         out_match_index = 0
-        unc_match_index = 0
 
         idx = 1
         for n in dose_nodes_ref:
@@ -359,14 +357,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 out_match_index = idx
             idx += 1
 
-        idx = 1
-        for n in unc_nodes:
-            self.unc_combo.addItem(self._safe_node_name(n))
-            self._unc_node_by_index[idx] = n
-            if unc_prev_id and node_id(n) == unc_prev_id:
-                unc_match_index = idx
-            idx += 1
-
         try:
             if ref_match_index:
                 self.ref_dose_combo.setCurrentIndex(ref_match_index)
@@ -377,15 +367,20 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 self.out_dose_combo.setCurrentIndex(out_match_index)
         except Exception:
             pass
+
+        # Update uncertainty checkbox state according to the current output dose selection
         try:
-            if unc_match_index:
-                self.unc_combo.setCurrentIndex(unc_match_index)
+            self._on_out_dose_changed()
         except Exception:
             pass
 
         self.ref_dose_combo.blockSignals(False)
         self.out_dose_combo.blockSignals(False)
-        self.unc_combo.blockSignals(False)
+        if getattr(self, "cb_unc_out", None) is not None:
+            try:
+                pass
+            except Exception:
+                logger.exception("Failed to restore uncertainty checkbox signals")
 
     def _selected_ref_dose_node(self):
         try:
@@ -400,11 +395,32 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             return None
 
     def _selected_unc_node(self):
+        """Legacy accessor: when using folder-based uncertainty the checkbox controls selection.
+
+        Return: uncertainty node if the "use uncertainty" checkbox is checked and an uncertainty
+        volume exists in the same SH folder as the selected output dose. Otherwise return None.
+        """
         try:
-            return self._unc_node_by_index.get(self._combo_current_index(self.unc_combo), None)
+            if getattr(self, "cb_unc_out", None) is not None and bool(self.cb_unc_out.isChecked()):
+                return self._find_uncertainty_in_same_folder(self._selected_out_dose_node())
+            return None
         except Exception:
             return None
 
+    def _on_out_dose_changed(self) -> None:
+        """Update uncertainty checkbox eligibility when output dose changes."""
+        try:
+            out_node = self._selected_out_dose_node()
+            unc = self._find_uncertainty_in_same_folder(out_node) if out_node is not None else None
+            if getattr(self, "cb_unc_out", None) is not None:
+                try:
+                    self.cb_unc_out.setEnabled(bool(unc is not None))
+                    if unc is None:
+                        self.cb_unc_out.setChecked(False)
+                except Exception:
+                    logger.exception("Failed updating uncertainty checkbox state")
+        except Exception:
+            logger.exception("_on_out_dose_changed failed")
     def _needs_resample_to_reference(self, input_node, reference_node) -> bool:
         if input_node is None or reference_node is None:
             return False
@@ -499,23 +515,24 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             try:
                 self.run_btn.setText("Stop" if bool(busy) else "Compute metrics")
             except Exception:
-                pass
+                logger.exception("Failed setting run button text")
         except Exception:
-            pass
+            logger.exception("Failed to update run button state")
         try:
             self.ref_dose_combo.setEnabled(not bool(busy))
             self.out_dose_combo.setEnabled(not bool(busy))
-            self.unc_combo.setEnabled(not bool(busy))
+            if getattr(self, "cb_unc_out", None) is not None:
+                self.cb_unc_out.setEnabled(not bool(busy))
         except Exception:
-            pass
+            logger.exception("Failed to set dose combo enabled state")
         try:
             self.seg_selector.setEnabled(not bool(busy))
         except Exception:
-            pass
+            logger.exception("Failed to set seg_selector enabled state")
         try:
             self.output_name_edit.setEnabled(not bool(busy))
         except Exception:
-            pass
+            logger.exception("Failed to set output_name_edit enabled state")
 
     def _export_segment_mask(self, segmentation_node, segment_id: str, reference_volume_node):
         """Export one segment to a temporary labelmap in reference volume geometry and return a boolean mask."""
@@ -735,100 +752,8 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         _poll()
 
     def _run_cli_async(self, cli_module, params: dict, on_done, on_error):
-        """Run a Slicer CLI without blocking the UI."""
-        try:
-            cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
-        except Exception as exc:
-            on_error(exc)
-            return None
-
-        holder = {"tag": None, "handled": False}
-
-        def _cleanup():
-            try:
-                if holder["tag"] is not None:
-                    cli_node.RemoveObserver(holder["tag"])
-            except Exception:
-                pass
-            try:
-                if cli_node is not None and cli_node.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(cli_node)
-            except Exception:
-                pass
-
-        def _finish(ok: bool, err: Exception = None):
-            # Avoid removing MRML nodes inside the VTK ModifiedEvent callstack (can crash Slicer).
-            if holder.get("handled", False):
-                return
-            holder["handled"] = True
-
-            def _do_finish():
-                _cleanup()
-                if ok:
-                    on_done()
-                else:
-                    on_error(err or RuntimeError("CLI failed"))
-
-            try:
-                QTimer.singleShot(0, _do_finish)
-            except Exception:
-                _do_finish()
-
-        def _status_tuple():
-            try:
-                return (cli_node.GetStatus(), str(cli_node.GetStatusString()))
-            except Exception:
-                try:
-                    return (None, str(cli_node.GetStatusString()))
-                except Exception:
-                    return (None, "")
-
-        def _on_modified(caller, event):
-            if self._active_job is None:
-                _finish(True)
-                return
-
-            status, status_str = _status_tuple()
-            try:
-                completed = hasattr(cli_node, "Completed") and status == cli_node.Completed
-                failed = hasattr(cli_node, "Failed") and status == cli_node.Failed
-                cancelled = hasattr(cli_node, "Cancelled") and status == cli_node.Cancelled
-            except Exception:
-                completed = failed = cancelled = False
-
-            if (status_str or "").lower() in ("completed", "completed with errors"):
-                completed = True
-            if (status_str or "").lower() in ("failed",):
-                failed = True
-            if (status_str or "").lower() in ("cancelled", "canceled"):
-                cancelled = True
-
-            if not (completed or failed or cancelled):
-                return
-
-            if failed:
-                msg = None
-                try:
-                    msg = str(cli_node.GetErrorText())
-                except Exception:
-                    msg = None
-                _finish(False, RuntimeError(msg or "CLI failed"))
-                return
-
-            if cancelled:
-                _finish(False, RuntimeError("CLI cancelled"))
-                return
-
-            _finish(True)
-
-        try:
-            holder["tag"] = cli_node.AddObserver(vtk.vtkCommand.ModifiedEvent, _on_modified)
-        except Exception as exc:
-            _cleanup()
-            on_error(exc)
-            return None
-
-        return cli_node
+        """Delegate to base implementation which centralizes CLI handling."""
+        return super()._run_cli_async(cli_module, params, on_done, on_error)
 
     def _cancel_active_job(self) -> None:
         job = self._active_job

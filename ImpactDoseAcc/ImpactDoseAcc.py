@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-
+from typing import Iterable, Optional
 import numpy as np
 import slicer
 from slicer.i18n import tr as _
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from qt import QTabWidget,QWidget
 
 SERVICE = "ImpactDoseAcc"
+
 
 try:
     # Normal package import within Slicer
@@ -43,6 +44,77 @@ except Exception:
     DoseAccumulationWidget = getattr(acc_mod, "DoseAccumulationWidget")
     MetricsEvaluationWidget = getattr(metrics_mod, "MetricsEvaluationWidget")
     DVHWidget = getattr(dvh_mod, "DVHWidget")
+
+
+
+def compute_statistics_from_arrays(arrays: Iterable[np.ndarray], *, dtype=np.float32, mask: Optional[np.ndarray] = None):
+    """Compute mean, std (population), min and max over a sequence of arrays using an
+    incremental Welford-style algorithm to avoid stacking all arrays in memory.
+
+    Parameters
+    - arrays: iterable of numpy arrays (all must have same shape)
+    - dtype: numpy dtype to use for outputs (default float32)
+    - mask: optional boolean array with the same shape as arrays to restrict computation to ROI
+
+    Returns a dict with keys: mean, std, min, max (all numpy arrays with dtype) and n_samples.
+    """
+    arrays = list(arrays or [])
+    if not arrays:
+        return {"mean": None, "std": None, "min": None, "max": None, "n_samples": 0}
+
+    # Validate shapes
+    first = np.asarray(arrays[0])
+    shape = first.shape
+    if mask is not None:
+        mask = np.asarray(mask)
+        if mask.shape != shape:
+            raise ValueError("mask shape must match input arrays")
+
+    mean = None
+    M2 = None
+    mn = None
+    mx = None
+    n = 0
+
+    for a in arrays:
+        arr = np.asarray(a)
+        if arr.shape != shape:
+            raise ValueError("All arrays must have the same shape")
+        if mask is not None:
+            arr = arr[mask]
+        arr = arr.astype(dtype, copy=False)
+
+        if mean is None:
+            # Initialize
+            mean = np.array(arr, dtype=dtype, copy=True)
+            M2 = np.zeros_like(mean, dtype=np.float64)
+            mn = np.array(arr, dtype=dtype, copy=True)
+            mx = np.array(arr, dtype=dtype, copy=True)
+            n = 1
+            continue
+
+        n += 1
+        # delta correction uses float64 internally for stability
+        delta = arr - mean
+        mean = mean + delta / n
+        M2 = M2 + (delta * (arr - mean))
+        mn = np.minimum(mn, arr)
+        mx = np.maximum(mx, arr)
+
+    if n == 0:
+        return {"mean": None, "std": None, "min": None, "max": None, "n_samples": 0}
+
+    # Population variance (ddof=0) to match previous behaviour (np.std default)
+    var = (M2 / n) if n > 0 else np.zeros_like(M2)
+    std = np.sqrt(var)
+
+    return {
+        "mean": np.asarray(mean, dtype=dtype),
+        "std": np.asarray(std, dtype=dtype),
+        "min": np.asarray(mn, dtype=dtype),
+        "max": np.asarray(mx, dtype=dtype),
+        "n_samples": n,
+    }
 
 
 class ImpactDoseAcc(ScriptedLoadableModule):
@@ -102,17 +174,43 @@ class ImpactDoseAccLogic(ScriptedLoadableModuleLogic):
         slicer.cli.runSync(slicer.modules.resamplescalarvectordwivolume, None, params)
         return warped_volume_node
 
-    def compute_dose_statistics(self, dose_volumes: list):
-        dose_arrays = [slicer.util.arrayFromVolume(n) for n in dose_volumes]
-        dose_stack = np.array(dose_arrays)
-        return {
-            "mean": np.mean(dose_stack, axis=0),
-            "std": np.std(dose_stack, axis=0),
-            "min": np.min(dose_stack, axis=0),
-            "max": np.max(dose_stack, axis=0),
-            "n_samples": len(dose_arrays),
-        }
+    def safe_remove_node(self, node) -> None:
+        """Safely remove a node from the current scene if present."""
+        try:
+            if node is not None and getattr(node, "GetScene", lambda: None)() == slicer.mrmlScene:
+                slicer.mrmlScene.RemoveNode(node)
+        except Exception:
+            logger.exception("safe_remove_node failed")
+            
+    def compute_dose_statistics(self, dose_volumes: list, *, dtype=np.float32, mask=None):
+        """
+        Compute per-voxel statistics (mean, std, min, max) using an incremental Welford algorithm
+        implemented in ImpactDoseAcc.utils.compute_statistics_from_arrays. Accepts either a list of
+        numpy arrays or a list of MRML volume nodes. dtype defaults to float32 for memory efficiency.
+        """
+        try:
+            # If the input already contains numpy arrays, forward directly to the util.
+            if dose_volumes and isinstance(dose_volumes[0], (np.ndarray,)):
+                return {**compute_statistics_from_arrays(dose_volumes, dtype=dtype, mask=mask),
+                    "n_samples": len(dose_volumes)}
 
+            arrays = []
+            for n in dose_volumes or []:
+                try:
+                    arr = slicer.util.arrayFromVolume(n)
+                except Exception as e:
+                    logger.exception("Failed to extract array from volume node")
+                    raise
+                if arr is None:
+                    raise RuntimeError("Failed to read voxel array from volume node")
+                arrays.append(arr.astype(dtype, copy=False))
+
+            stats = compute_statistics_from_arrays(arrays, dtype=dtype, mask=mask)
+            stats["n_samples"] = len(arrays)
+            return stats
+        except Exception:
+            logger.exception("compute_dose_statistics failed")
+            raise
     def save_dose_to_dicom(self, dose_volumes, output_path: str, series_number: int = 1, metadata: dict = None) -> str:
         logger.warning("save_dose_to_dicom is not implemented; implement with pydicom/dcmqi")
         raise NotImplementedError("Not implemented")

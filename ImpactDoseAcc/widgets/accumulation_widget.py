@@ -90,156 +90,30 @@ class DoseAccumulationWidget(BaseImpactWidget):
         self._refresh_all()
 
     def _set_status(self, text: str) -> None:
-        try:
-            self.status_label.setText(text or "")
-        except Exception:
-            pass
+        return super()._set_status(text)
 
     def _set_progress(self, value, visible: bool = True) -> None:
-        try:
-            if not hasattr(self, "progress_bar") or self.progress_bar is None:
-                return
-            if value is None:
-                self.progress_bar.setRange(0, 0)
-            else:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(int(max(0, min(100, value))))
-            self.progress_bar.setVisible(bool(visible))
-        except Exception:
-            pass
+        return super()._set_progress(value, visible)
 
     def _set_ui_busy(self, busy: bool) -> None:
-        target = getattr(self, "_root_widget", None) or self
-        try:
-            target.setEnabled(not bool(busy))
-        except Exception:
-            pass
+        return super()._set_ui_busy(busy)
 
     def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
-        """Run a Slicer CLI without blocking the UI."""
-        try:
-            cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
-        except Exception as exc:
-            on_error(exc)
-            return
-
-        holder = {"tag": None, "handled": False}
-
-        def _cleanup():
-            try:
-                if holder["tag"] is not None:
-                    cli_node.RemoveObserver(holder["tag"])
-            except Exception:
-                pass
-            try:
-                if cli_node is not None and cli_node.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(cli_node)
-            except Exception:
-                pass
-
-        def _schedule_cleanup_only():
-            # Avoid removing MRML nodes inside the VTK ModifiedEvent callstack.
-            if holder.get("handled", False):
-                return
-            holder["handled"] = True
-
-            def _do_cleanup():
-                _cleanup()
-
-            try:
-                QTimer.singleShot(0, _do_cleanup)
-            except Exception:
-                _do_cleanup()
-
-        def _finish(ok: bool, err: Exception = None):
-            # Avoid removing MRML nodes inside the VTK ModifiedEvent callstack.
-            if holder.get("handled", False):
-                return
-            holder["handled"] = True
-
-            def _do_finish():
-                _cleanup()
-                if ok:
-                    on_done()
-                else:
-                    on_error(err or RuntimeError("CLI failed"))
-
-            try:
-                QTimer.singleShot(0, _do_finish)
-            except Exception:
-                _do_finish()
-
-        def _status_tuple():
-            try:
-                return (cli_node.GetStatus(), str(cli_node.GetStatusString()))
-            except Exception:
-                try:
-                    return (None, str(cli_node.GetStatusString()))
-                except Exception:
-                    return (None, "")
-
-        def _on_modified(caller, event):
-            if self._active_job is None:
-                _schedule_cleanup_only()
-                return
-
-            status, status_str = _status_tuple()
-            try:
-                completed = hasattr(cli_node, "Completed") and status == cli_node.Completed
-                failed = hasattr(cli_node, "Failed") and status == cli_node.Failed
-                cancelled = hasattr(cli_node, "Cancelled") and status == cli_node.Cancelled
-            except Exception:
-                completed = failed = cancelled = False
-
-            if (status_str or "").lower() in ("completed", "completed with errors"):
-                completed = True
-            if (status_str or "").lower() in ("failed",):
-                failed = True
-            if (status_str or "").lower() in ("cancelled", "canceled"):
-                cancelled = True
-
-            if not (completed or failed or cancelled):
-                return
-
-            if failed:
-                msg = None
-                try:
-                    msg = str(cli_node.GetErrorText())
-                except Exception:
-                    msg = None
-                _finish(False, RuntimeError(msg or "CLI failed"))
-                return
-
-            if cancelled:
-                _finish(False, RuntimeError("CLI cancelled"))
-                return
-
-            _finish(True)
-
-        try:
-            holder["tag"] = cli_node.AddObserver(vtk.vtkCommand.ModifiedEvent, _on_modified)
-        except Exception as exc:
-            _cleanup()
-            on_error(exc)
+        """Delegate to base implementation for running CLI jobs asynchronously."""
+        return super()._run_cli_async(cli_module, params, on_done, on_error)
 
     def _find_uncertainty_node(self, base: str):
         """Find the uncertainty volume corresponding to a Phase-1 output base.
         """
         if slicer.mrmlScene is None:
             return None
-        try:
-            b = str(base or "").strip()
-        except Exception:
-            b = ""
+        b = str(base or "").strip()
         if not b:
             return None
 
         candidates = (f"uncertainty_{b}", f"uncertainty_dose_{b}")
         for name in candidates:
-            try:
-                n = slicer.mrmlScene.GetFirstNodeByName(name)
-            except Exception:
-                n = None
+            n = slicer.mrmlScene.GetFirstNodeByName(name)
             if n is not None:
                 return n
         return None
@@ -260,14 +134,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                     pass
 
     def _combo_current_index(self, combo) -> int:
-        """Return currentIndex from a QComboBox in a PythonQt-safe way."""
-        if combo is None:
-            return 0
-        idx_attr = getattr(combo, "currentIndex", 0)
-        try:
-            return int(idx_attr() if callable(idx_attr) else idx_attr)
-        except Exception:
-            return 0
+        return super()._combo_current_index(combo)
 
     def _refresh_all(self) -> None:
         self._refresh_patient_list()
@@ -278,17 +145,10 @@ class DoseAccumulationWidget(BaseImpactWidget):
         self._refresh_fraction_list()
 
     def _generate_default_output_name(self) -> str:
-        return f"session_{uuid4().hex[:2]}"
+        return super()._generate_default_output_name(prefix="dose_acc")
 
     def _line_edit_text(self, line_edit) -> str:
-        if line_edit is None:
-            return ""
-        text_attr = getattr(line_edit, "text", "")
-        try:
-            val = text_attr() if callable(text_attr) else text_attr
-            return "" if val is None else str(val)
-        except Exception:
-            return ""
+        return super()._line_edit_text(line_edit)
 
     def _double_spin_value(self, spin) -> float:
         if spin is None:
@@ -332,18 +192,14 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
 
     def _safe_node_name(self, node) -> str:
-        if node is None or not hasattr(node, "GetName"):
-            return ""
-        try:
-            return node.GetName() or ""
-        except Exception:
-            return ""
+        return super()._safe_node_name(node)
 
     def _is_fraction_proxy_name(self, name: str) -> bool:
         """Return True if a MRML node name corresponds to a Phase-1 dose_list output."""
         try:
             n = str(name or "")
-        except Exception:
+        except Exception as e:
+            logger.exception("_is_fraction_proxy_name invalid name")
             return False
         return n.startswith("dose_list_")
 
@@ -683,10 +539,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
     def _on_compute_accumulation(self) -> None:
         # Avoid blocking the UI: run as an async job.
         if self._active_job is not None:
-            try:
-                QMessageBox.information(self, "Busy", "An accumulation computation is already running.")
-            except Exception:
-                pass
+            QMessageBox.information(self, "Busy", "An accumulation computation is already running.")
             return
 
         if slicer.mrmlScene is None:
@@ -726,10 +579,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             # k = ceil(20% of the number of eligible sessions), capped to N-1.
             eligible_n = 0
             for node, w in selected_items:
-                try:
-                    if float(w) <= 0.0:
-                        continue
-                except Exception:
+                if float(w) <= 0.0:
                     continue
                 base = self._base_name_from_dose_list(self._safe_node_name(node))
                 if not base or slicer.mrmlScene is None:
@@ -754,10 +604,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             for node, w in selected_items:
                 if float(w) <= 0.0:
                     continue
-                try:
-                    node_id = node.GetID() if node is not None and hasattr(node, "GetID") else None
-                except Exception:
-                    node_id = None
+                node_id = node.GetID() if node is not None and hasattr(node, "GetID") else None
                 if node_id:
                     eligible.append(node_id)
 
@@ -824,10 +671,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         ref = job["ref_node"]
 
         def _node_id(n):
-            try:
-                return n.GetID() if n is not None and hasattr(n, "GetID") else None
-            except Exception:
-                return None
+            return n.GetID() if n is not None and hasattr(n, "GetID") else None
 
         # Dose volumes
         for dose_list_node, w in job["selected_items"]:

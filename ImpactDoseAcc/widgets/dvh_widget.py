@@ -8,6 +8,8 @@ import vtk
 from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
 import importlib.util
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 base_path = Path(__file__).resolve().parent / "base_widget.py"
 spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
@@ -82,10 +84,8 @@ class DVHWidget(BaseImpactWidget):
         # Buttons & signals
         self._btn("refresh_btn", self._refresh_dose_lists)
         if self.run_btn is not None:
-            try:
-                self.run_btn.clicked.connect(self._on_compute_dvh)
-            except Exception:
-                pass
+            self.run_btn.clicked.connect(self._on_compute_dvh)
+
         # show_png_btn removed
         try:
             if self.seg_selector is not None:
@@ -128,15 +128,9 @@ class DVHWidget(BaseImpactWidget):
 
         # Embedded plot widget configuration
         if self.plot_widget is not None:
-            try:
-                self.plot_widget.setMRMLScene(slicer.mrmlScene)
-                self.plot_widget.setMinimumHeight(260)
-            except Exception:
-                pass
-            try:
-                self._ensure_embedded_plot_view()
-            except Exception:
-                pass
+            self.plot_widget.setMRMLScene(slicer.mrmlScene)
+            self.plot_widget.setMinimumHeight(260)
+            self._ensure_embedded_plot_view()
 
         layout = QVBoxLayout(self)
         layout.addWidget(ui_widget)
@@ -148,22 +142,29 @@ class DVHWidget(BaseImpactWidget):
         self._update_legend(structure_items=[])
 
     def _set_plot_chart_on_widget(self, chart_node) -> None:
+        """Attach a vtkMRMLPlotChartNode to the embedded plot widget using standard APIs only.
+
+        This does not force visibility or perform UI event loop tricks — it delegates to the
+        widget / plot view APIs and returns silently on failure.
+        """
         if self.plot_widget is None or chart_node is None:
             return
-        # Slicer API can differ across versions. Prefer PlotViewNode + PlotChartNodeID.
+
         try:
             self._ensure_embedded_plot_view()
         except Exception:
+            # Best-effort; if embedding fails we keep going with widget-level APIs.
             pass
 
-        # Attach chart to the plot view node if possible
         try:
             if self._plot_view_node is not None and hasattr(self._plot_view_node, "SetPlotChartNodeID") and hasattr(chart_node, "GetID"):
-                self._plot_view_node.SetPlotChartNodeID(chart_node.GetID())
+                try:
+                    self._plot_view_node.SetPlotChartNodeID(chart_node.GetID())
+                except Exception:
+                    pass
         except Exception:
             pass
 
-        # Fallbacks (older/newer APIs)
         try:
             if hasattr(self.plot_widget, "setMRMLPlotChartNode"):
                 self.plot_widget.setMRMLPlotChartNode(chart_node)
@@ -171,11 +172,7 @@ class DVHWidget(BaseImpactWidget):
                 self.plot_widget.setMRMLPlotChartNodeID(chart_node.GetID())
         except Exception:
             pass
-        try:
-            self.plot_widget.setVisible(True)
-            self.plot_widget.show()
-        except Exception:
-            pass
+
 
     def _ensure_embedded_plot_view(self) -> None:
         if self.plot_widget is None or slicer.mrmlScene is None:
@@ -282,54 +279,43 @@ class DVHWidget(BaseImpactWidget):
             pass
 
     def _set_status(self, text: str) -> None:
-        try:
-            self.status_label.setText(text or "")
-        except Exception:
-            pass
+        return super()._set_status(text)
 
     def _set_progress(self, value, visible: bool = True) -> None:
-        try:
-            if self.progress_bar is None:
-                return
-            if value is None:
-                self.progress_bar.setRange(0, 0)
-            else:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(int(max(0, min(100, int(value)))))
-            self.progress_bar.setVisible(bool(visible))
-        except Exception:
-            pass
+        return super()._set_progress(value, visible)
 
     def _set_ui_busy(self, busy: bool) -> None:
+        # Use base implementation for generic behavior, then apply widget-specific enables.
+        super()._set_ui_busy(busy)
         try:
             self.run_btn.setEnabled(not bool(busy))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to set run_btn enabled state")
         try:
             self.dose_combo_a.setEnabled(not bool(busy))
             self.dose_combo_b.setEnabled(not bool(busy))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to set dose combo enabled state")
         try:
             self.seg_selector.setEnabled(not bool(busy))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to set seg_selector enabled state")
         try:
             self.output_name_edit.setEnabled(not bool(busy))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to set output_name_edit enabled state")
         # Uncertainty checkboxes: always disable while running; restore eligibility after.
         if bool(busy):
             try:
                 self.cb_unc_a.setEnabled(False)
                 self.cb_unc_b.setEnabled(False)
             except Exception:
-                pass
+                logger.exception("Failed to disable uncertainty checkboxes")
         else:
             try:
                 self._on_dose_selection_changed()
             except Exception:
-                pass
+                logger.exception("_on_dose_selection_changed raised when restoring UI busy state")
 
 
     def _selected_dose_node_a(self):
@@ -351,20 +337,11 @@ class DVHWidget(BaseImpactWidget):
         # Keep previous selections by node ID.
         prev_a = self._selected_dose_node_a()
         prev_b = self._selected_dose_node_b()
-        try:
-            prev_a_id = prev_a.GetID() if prev_a is not None and hasattr(prev_a, "GetID") else None
-        except Exception:
-            prev_a_id = None
-        try:
-            prev_b_id = prev_b.GetID() if prev_b is not None and hasattr(prev_b, "GetID") else None
-        except Exception:
-            prev_b_id = None
+        prev_a_id = prev_a.GetID() if prev_a is not None and hasattr(prev_a, "GetID") else None
+        prev_b_id = prev_b.GetID() if prev_b is not None and hasattr(prev_b, "GetID") else None
 
-        try:
-            self.dose_combo_a.blockSignals(True)
-            self.dose_combo_b.blockSignals(True)
-        except Exception:
-            pass
+        self.dose_combo_a.blockSignals(True)
+        self.dose_combo_b.blockSignals(True)
 
         self.dose_combo_a.clear()
         self.dose_combo_b.clear()
@@ -556,59 +533,15 @@ class DVHWidget(BaseImpactWidget):
         return ""
 
     def _find_uncertainty_in_same_folder(self, dose_node):
-        """Return an uncertainty volume node in the same SH folder as dose_node, if any."""
-        if slicer.mrmlScene is None or dose_node is None:
-            return None
+        """Delegate to BaseImpactWidget._find_uncertainty_in_same_folder.
 
-        shNode = self._get_sh_node()
-        if shNode is None:
-            return None
-
+        Kept for backward compatibility; centralised implementation lives in BaseImpactWidget.
+        """
         try:
-            dose_item = int(shNode.GetItemByDataNode(dose_node) or 0)
+            return super()._find_uncertainty_in_same_folder(dose_node)
         except Exception:
-            dose_item = 0
-        if not dose_item:
+            logger.exception("Delegated _find_uncertainty_in_same_folder failed")
             return None
-        try:
-            parent = int(shNode.GetItemParent(dose_item) or 0)
-        except Exception:
-            parent = 0
-        if not parent:
-            return None
-
-        base = self._dose_base_name(self._safe_node_name(dose_node))
-        preferred = []
-        if base:
-            preferred = [f"uncertainty_{base}", f"uncertainty_dose_{base}"]
-
-        ids = vtk.vtkIdList()
-        try:
-            shNode.GetItemChildren(parent, ids)
-        except Exception:
-            return None
-
-        first_unc = None
-        for i in range(ids.GetNumberOfIds()):
-            try:
-                child = int(ids.GetId(i))
-            except Exception:
-                continue
-            try:
-                n = shNode.GetItemDataNode(child)
-            except Exception:
-                n = None
-            if n is None or not hasattr(n, "IsA") or not n.IsA("vtkMRMLScalarVolumeNode"):
-                continue
-            name = self._safe_node_name(n).lower()
-            if "uncertainty" not in name:
-                continue
-            if first_unc is None:
-                first_unc = n
-            for pref in preferred:
-                if self._safe_node_name(n) == pref:
-                    return n
-        return first_unc
 
     def _on_dose_selection_changed(self) -> None:
         dose_a = self._selected_dose_node_a()

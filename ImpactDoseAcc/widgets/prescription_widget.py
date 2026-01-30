@@ -319,10 +319,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             self.export_dir_display.setStyleSheet("color: gray;")
 
         if self.output_name_edit is not None:
-            try:
-                self.output_name_edit.setText(self._generate_default_output_name(prefix="session"))
-            except Exception:
-                pass
+            self.output_name_edit.setText(self._generate_default_output_name(prefix="session"))
 
         # Buttons
         self._btn("refresh_tps_btn", self._refresh_tps_lists)
@@ -392,123 +389,8 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     pass
 
     def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
-        """Run a Slicer CLI without blocking the UI."""
-        if cli_module is None:
-            try:
-                on_error(RuntimeError("CLI module is not available"))
-            except Exception:
-                pass
-            return
-        if not hasattr(slicer, "cli") or slicer.cli is None:
-            try:
-                on_error(RuntimeError("Slicer CLI interface is not available"))
-            except Exception:
-                pass
-            return
-        try:
-            cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
-        except Exception as exc:
-            on_error(exc)
-            return
-
-        holder = {"tag": None, "handled": False}
-
-        def _cleanup():
-            try:
-                if holder["tag"] is not None:
-                    cli_node.RemoveObserver(holder["tag"])
-            except Exception:
-                pass
-            try:
-                if cli_node is not None and cli_node.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(cli_node)
-            except Exception:
-                pass
-
-        def _schedule_cleanup_only():
-            # Avoid removing MRML nodes inside the VTK ModifiedEvent callstack.
-            if holder.get("handled", False):
-                return
-            holder["handled"] = True
-
-            def _do_cleanup():
-                _cleanup()
-
-            try:
-                QTimer.singleShot(0, _do_cleanup)
-            except Exception:
-                _do_cleanup()
-
-        def _finish(ok: bool, err: Exception = None):
-            # Avoid removing MRML nodes inside the VTK ModifiedEvent callstack.
-            if holder.get("handled", False):
-                return
-            holder["handled"] = True
-
-            def _do_finish():
-                _cleanup()
-                if ok:
-                    on_done()
-                else:
-                    on_error(err or RuntimeError("CLI failed"))
-
-            try:
-                QTimer.singleShot(0, _do_finish)
-            except Exception:
-                _do_finish()
-
-        def _status_tuple():
-            try:
-                return (cli_node.GetStatus(), str(cli_node.GetStatusString()))
-            except Exception:
-                try:
-                    return (None, str(cli_node.GetStatusString()))
-                except Exception:
-                    return (None, "")
-
-        def _on_modified(caller, event):
-            if self._active_job is None:
-                _schedule_cleanup_only()
-                return
-
-            status, status_str = _status_tuple()
-            try:
-                completed = hasattr(cli_node, "Completed") and status == cli_node.Completed
-                failed = hasattr(cli_node, "Failed") and status == cli_node.Failed
-                cancelled = hasattr(cli_node, "Cancelled") and status == cli_node.Cancelled
-            except Exception:
-                completed = failed = cancelled = False
-
-            if (status_str or "").lower() in ("completed", "completed with errors"):
-                completed = True
-            if (status_str or "").lower() in ("failed",):
-                failed = True
-            if (status_str or "").lower() in ("cancelled", "canceled"):
-                cancelled = True
-
-            if not (completed or failed or cancelled):
-                return
-
-            if failed:
-                msg = None
-                try:
-                    msg = str(cli_node.GetErrorText())
-                except Exception:
-                    msg = None
-                _finish(False, RuntimeError(msg or "CLI failed"))
-                return
-
-            if cancelled:
-                _finish(False, RuntimeError("CLI cancelled"))
-                return
-
-            _finish(True)
-
-        try:
-            holder["tag"] = cli_node.AddObserver(vtk.vtkCommand.ModifiedEvent, _on_modified)
-        except Exception as exc:
-            _cleanup()
-            on_error(exc)
+        """Delegate to base implementation which centralizes CLI handling."""
+        return super()._run_cli_async(cli_module, params, on_done, on_error)
 
     def _add_session_selector(self) -> None:
         row_widget = DvfSelectorRow(on_add=self._add_session_selector, on_remove=self._remove_session_selector)

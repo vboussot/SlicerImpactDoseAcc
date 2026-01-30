@@ -87,7 +87,14 @@
          </widget>
         </item>
         <item>
-         <widget class="QComboBox" name="unc_combo"/>
+         <widget class="QCheckBox" name="cb_unc_out">
+          <property name="text">
+           <string>Use uncertainty</string>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
+          </property>
+         </widget>
         </item>
        </layout>
       </item>
