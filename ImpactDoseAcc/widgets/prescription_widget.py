@@ -1,27 +1,34 @@
 import logging
-import vtk
-import numpy as np
-from uuid import uuid4
-import slicer
-from qt import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QCheckBox, QFileDialog, QWidget, QMessageBox, QTimer
-
-import importlib.util
 import os
-from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import numpy as np
+import slicer
+import vtk
+from qt import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTimer,
+    QVBoxLayout,
+    QWidget,
+)
+from widgets.base_widget import BaseImpactWidget
 
 logger = logging.getLogger(__name__)
 
-base_path = Path(__file__).resolve().parent / "base_widget.py"
-spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
-base_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(base_mod)  # type: ignore
-BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
 
 class DvfSelectorRow(QWidget):
     """UI row for selecting a single DVF sample.
 
     Supports native TransformNodes and transform sequences.
     """
+
     def __init__(self, on_add=None, on_remove=None):
         super().__init__()
         self._dvf_node = None
@@ -64,12 +71,13 @@ class DvfSelectorRow(QWidget):
         if not callable(self._on_remove):
             return
         try:
+
             def _do_remove():
                 self._on_remove(self)
+
             QTimer.singleShot(0, _do_remove)
         except Exception:
             self._on_remove(self)
-
 
     def _populate_dvf_options(self) -> None:
         self.dvf_combo.clear()
@@ -151,6 +159,7 @@ class DoseSelectorRow(QWidget):
 
     Multiple rows can be added to select multiple doses.
     """
+
     def __init__(self, is_rtdose_cb, on_add=None, on_remove=None):
         super().__init__()
         self._is_rtdose = is_rtdose_cb
@@ -196,6 +205,7 @@ class DoseSelectorRow(QWidget):
             if not callable(self._on_remove):
                 return
             try:
+
                 def _do_remove():
                     self._on_remove(self)
 
@@ -257,7 +267,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         self.export_dir = ""
         self._sct_node_map = {}
         self._ref_ct_node_map = {}
-        self.ref_ct_combo = None
+        self.ref_ct_combo: QComboBox
         self.output_name_edit = None
         self.sct_checkboxes = []
         self._active_job = None
@@ -325,7 +335,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         self._btn("refresh_tps_btn", self._refresh_tps_lists)
         refresh_sessions_cb = self._refresh_sessions_callback or self._refresh_session_combos
         self._btn("refresh_sessions_btn", refresh_sessions_cb)
-        self.browse_export_btn = self._btn("browse_export_btn", self._browse_export_dir_callback or self._on_browse_export_dir)
+        self.browse_export_btn = self._btn(
+            "browse_export_btn", self._browse_export_dir_callback or self._on_browse_export_dir
+        )
         self.export_btn = self._btn("export_btn", self._export_callback or self._on_export_sct)
 
         # Populate combos and lists
@@ -407,7 +419,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         )
 
     def _add_dose_selector(self) -> None:
-        row_widget = DoseSelectorRow(self._is_rtdose, on_add=self._add_dose_selector, on_remove=self._remove_dose_selector)
+        row_widget = DoseSelectorRow(
+            self._is_rtdose, on_add=self._add_dose_selector, on_remove=self._remove_dose_selector
+        )
         self._dose_widgets.append(row_widget)
         if hasattr(self, "dose_rows_layout"):
             self.dose_rows_layout.insertWidget(len(self._dose_widgets) - 1, row_widget)
@@ -442,15 +456,15 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         if slicer.mrmlScene is None:
             return
 
-        shNode = self._get_sh_node()
+        sh_node = self._get_sh_node()
         volume_nodes = slicer.util.getNodes("vtkMRMLScalarVolumeNode*")
 
         def sort_key(kv):
             node_name, node = kv
             in_sh = 0
-            if shNode is not None:
+            if sh_node is not None:
                 try:
-                    in_sh = 0 if shNode.GetItemByDataNode(node) > 0 else 1
+                    in_sh = 0 if sh_node.GetItemByDataNode(node) > 0 else 1
                 except Exception:
                     in_sh = 1
             return (in_sh, node_name.lower())
@@ -486,9 +500,11 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         def _is_export_candidate_name(name: str) -> bool:
             # Keep sCT list clean: exclude anything that looks like dose.
             return not self._name_contains_dose(name)
-        
+
         for node_name, node in volume_nodes.items():
-            if (not _is_export_candidate_name(node_name)) or (node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))):
+            if (not _is_export_candidate_name(node_name)) or (
+                node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))
+            ):
                 continue
             if self._is_dicom_volume(node):
                 continue
@@ -503,7 +519,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
         # sequences
         for node_name, node in sequence_nodes.items():
-            if (not _is_export_candidate_name(node_name)) or (node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))):
+            if (not _is_export_candidate_name(node_name)) or (
+                node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))
+            ):
                 continue
             # Only list sequences of scalar volumes (exclude transform sequences, etc.)
             data_class = node.GetDataNodeClassName()
@@ -603,9 +621,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
         disp_node = None
         try:
-            disp_node = slicer.mrmlScene.AddNewNodeByClass(
-                "vtkMRMLVectorVolumeNode", f"dvf_disp_tmp_{uuid4().hex[:6]}"
-            )
+            disp_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode", f"dvf_disp_tmp_{uuid4().hex[:6]}")
             temp_nodes.append(disp_node)
             # Avoid UI/render pipeline churn for temp nodes.
             try:
@@ -627,26 +643,30 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             nonlocal created, returned_arr
             if logic_obj is None or created or returned_arr is not None:
                 return
-            for method_name in ("CreateDisplacementVolumeFromTransform", "CreateDisplacementVolumeFromTransformNode", "CreateDisplacementField"):
+            for method_name in (
+                "CreateDisplacementVolumeFromTransform",
+                "CreateDisplacementVolumeFromTransformNode",
+                "CreateDisplacementField",
+            ):
                 if not hasattr(logic_obj, method_name):
                     continue
                 method = getattr(logic_obj, method_name, None)
                 if method is None:
                     continue
-                for args in ((transform_node, reference_volume_node, disp_node), (transform_node, disp_node, reference_volume_node)):
+                for args in (
+                    (transform_node, reference_volume_node, disp_node),
+                    (transform_node, disp_node, reference_volume_node),
+                ):
                     try:
                         method(*args)
                         created = True
                         return
-                    except TypeError:
-                        continue
                     except Exception:
                         continue
+
                 for args in ((transform_node, reference_volume_node), (transform_node,)):
                     try:
                         out = method(*args)
-                    except TypeError:
-                        continue
                     except Exception:
                         continue
                     if out is None:
@@ -731,7 +751,10 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                 if node is None:
                     continue
                 try:
-                    if node.IsA("vtkMRMLScalarVolumeNode") and "displacement magnitude" in (node.GetName() or "").lower():
+                    if (
+                        node.IsA("vtkMRMLScalarVolumeNode")
+                        and "displacement magnitude" in (node.GetName() or "").lower()
+                    ):
                         arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
                         break
                 except Exception:
@@ -782,7 +805,11 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         return self._is_truthy_attr(self._get_attr(node, "DicomRtImport.DoseVolume"))
 
     def _is_dicom(self, node) -> bool:
-        return bool(self._get_attr(node, "DICOM.instanceUIDs")) or bool(self._get_attr(node, "DICOM.SeriesInstanceUID")) or bool(self._get_attr(node, "DICOM.StudyInstanceUID"))
+        return (
+            bool(self._get_attr(node, "DICOM.instanceUIDs"))
+            or bool(self._get_attr(node, "DICOM.SeriesInstanceUID"))
+            or bool(self._get_attr(node, "DICOM.StudyInstanceUID"))
+        )
 
     def _is_dicom_volume(self, node) -> bool:
         return self._is_rtdose(node) or self._is_dicom(node)
@@ -808,61 +835,61 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         """Ensure node has an SH item and is parented under folder_item_id."""
         if slicer.mrmlScene is None or node is None or not folder_item_id:
             return
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return
 
-        item_id = shNode.GetItemByDataNode(node)
+        item_id = sh_node.GetItemByDataNode(node)
 
         if item_id == 0:
-            item_id = shNode.CreateItem(folder_item_id, node)
+            item_id = sh_node.CreateItem(folder_item_id, node)
 
-        shNode.SetItemParent(item_id, folder_item_id)
+        sh_node.SetItemParent(item_id, folder_item_id)
 
     def _get_or_create_output_folder_item(self, reference_node, folder_name: str):
         """Return a SubjectHierarchy folder item under the same subject (patient) as reference_node."""
         if slicer.mrmlScene is None or reference_node is None:
             return None
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return None
 
-        ref_item_id = shNode.GetItemByDataNode(reference_node)
+        ref_item_id = sh_node.GetItemByDataNode(reference_node)
         if ref_item_id == 0:
             return None
 
         # Create the folder as a child of the Subject/Patient item (not under the dose node).
-        parent_item_id = self._get_subject_item_id_from_sh(shNode, ref_item_id) or ref_item_id
+        parent_item_id = self._get_subject_item_id_from_sh(sh_node, ref_item_id) or ref_item_id
 
         children = vtk.vtkIdList()
-        shNode.GetItemChildren(parent_item_id, children, False)
+        sh_node.GetItemChildren(parent_item_id, children, False)
         for i in range(children.GetNumberOfIds()):
             child_id = children.GetId(i)
-            if shNode.GetItemName(child_id) == folder_name and shNode.GetItemDataNode(child_id) is None:
+            if sh_node.GetItemName(child_id) == folder_name and sh_node.GetItemDataNode(child_id) is None:
                 return child_id
 
-        return shNode.CreateFolderItem(parent_item_id, folder_name)
+        return sh_node.CreateFolderItem(parent_item_id, folder_name)
 
-    def _get_subject_item_id_from_sh(self, shNode, item_id: int):
+    def _get_subject_item_id_from_sh(self, sh_node, item_id: int):
         """Climb SH parents until we reach the Patient (subject) item.
 
         Fallback: returns the immediate parent if Patient level cannot be detected.
         """
-        if shNode is None or not item_id:
+        if sh_node is None or not item_id:
             return 0
         current = item_id
         last_parent = 0
         for _ in range(20):
             level = ""
             try:
-                level = shNode.GetItemLevel(current)
+                level = sh_node.GetItemLevel(current)
             except Exception:
                 level = ""
             if str(level).lower() == "patient":
                 return current
             parent = 0
             try:
-                parent = shNode.GetItemParent(current)
+                parent = sh_node.GetItemParent(current)
             except Exception:
                 parent = 0
             if not parent:
@@ -937,7 +964,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         return 0
 
     def _extract_ref_ct_metadata(self, ref_ct_node) -> dict:
-        md = {}
+        md: dict[str, Any] = {}
 
         instance_uids_raw = ref_ct_node.GetAttribute("DICOM.instanceUIDs")
         instance_uid = str(instance_uids_raw).strip().split()[0]
@@ -954,41 +981,43 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             "StudyInstanceUID": "0020,000D",
             "FrameOfReferenceUID": "0020,0052",
         }
-        for out_key, dicom_tag in tag_map.items():
-            if md.get(out_key):
-                continue
-            try:
-                val = dicom_db.instanceValue(instance_uid, dicom_tag)
-            except Exception:
-                val = None
-            if val:
-                md[out_key] = val
-
+        if dicom_db is not None:
+            for out_key, dicom_tag in tag_map.items():
+                if md.get(out_key):
+                    continue
+                try:
+                    val = dicom_db.instanceValue(instance_uid, dicom_tag)
+                except Exception:
+                    val = None
+                if val:
+                    md[out_key] = val
         return md
 
-    def _configure_export_tags(self, exp, directory: str, metadata: dict, series_number: int, series_description: str) -> None:
+    def _configure_export_tags(
+        self, exp, directory: str, metadata: dict, series_number: int, series_description: str
+    ) -> None:
         exp.directory = directory
         for key, val in metadata.items():
-            if key == 'PatientID':
-                exp.setTag('PatientID', val)
-            elif key == 'PatientName':
-                exp.setTag('PatientName', val)
-            elif key == 'StudyID':
-                exp.setTag('StudyID', val)
-            elif key == 'StudyDescription':
-                exp.setTag('StudyDescription', val)
-            elif key == 'StudyDate':
-                exp.setTag('StudyDate', val)
-            elif key == 'StudyTime':
-                exp.setTag('StudyTime', val)
-            elif key == 'SOPClassUID':
-                exp.setTag('SOPClassUID', val)
-            elif key == 'StudyInstanceUID':
-                exp.setTag('StudyInstanceUID', val)
-            elif key == 'FrameOfReferenceUID':
-                exp.setTag('FrameOfReferenceUID', val)
-        exp.setTag('SeriesNumber', str(series_number))
-        exp.setTag('SeriesDescription', series_description)
+            if key == "PatientID":
+                exp.setTag("PatientID", val)
+            elif key == "PatientName":
+                exp.setTag("PatientName", val)
+            elif key == "StudyID":
+                exp.setTag("StudyID", val)
+            elif key == "StudyDescription":
+                exp.setTag("StudyDescription", val)
+            elif key == "StudyDate":
+                exp.setTag("StudyDate", val)
+            elif key == "StudyTime":
+                exp.setTag("StudyTime", val)
+            elif key == "SOPClassUID":
+                exp.setTag("SOPClassUID", val)
+            elif key == "StudyInstanceUID":
+                exp.setTag("StudyInstanceUID", val)
+            elif key == "FrameOfReferenceUID":
+                exp.setTag("FrameOfReferenceUID", val)
+        exp.setTag("SeriesNumber", str(series_number))
+        exp.setTag("SeriesDescription", series_description)
 
     def _on_export_sct(self):
         if self._active_job is not None:
@@ -1005,7 +1034,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         if not self.export_dir:
             QMessageBox.warning(self, "No Directory", "Please select an export directory.")
             return
-        
+
         selected_nodes = []
         for checkbox in self.sct_checkboxes:
             if checkbox.isChecked():
@@ -1038,7 +1067,6 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             self._set_ui_busy(False)
             self._set_status("")
 
-
     def _on_deform_and_compute(self):
         if self._active_job is not None:
             QMessageBox.information(self, "Busy", "A computation is already running.")
@@ -1053,7 +1081,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
         output_name_val = self._line_edit_text(self.output_name_edit)
 
-        base_name = output_name_val.strip() 
+        base_name = output_name_val.strip()
 
         selected_doses = []
         for dose_widget in self._dose_widgets:
@@ -1107,7 +1135,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         for dose_idx, base_dose in enumerate(selected_doses, start=1):
             for dvf_idx, dvf_node, dvf_type in dvf_samples:
                 dvf_nodes = (
-                    self._expand_sequence_nodes(dvf_node, job["temp_nodes"]) if dvf_type == "transform-sequence" else [dvf_node]
+                    self._expand_sequence_nodes(dvf_node, job["temp_nodes"])
+                    if dvf_type == "transform-sequence"
+                    else [dvf_node]
                 )
                 if not dvf_nodes:
                     logger.warning(f"DVF {dvf_idx}: No DVF available")
@@ -1255,7 +1285,8 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     self,
                     "Computation Complete",
                     (
-                        f"Computed mean dose from {n_samples} deformed sample(s) (from {len(j['selected_doses'])} dose(s)).\n"
+                        f"Computed mean dose from {n_samples} deformed sample(s) "
+                        + "(from {len(j['selected_doses'])} dose(s)).\n"
                         + (
                             "Created volumes: " + ", ".join(created_volume_names)
                             if created_volume_names
@@ -1307,7 +1338,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     dvf_id = None
                 if dvf_id and (dvf_id not in j.get("mag_done", set())):
                     try:
-                        disp = self._displacement_array_from_transform(dvf_to_use, j["reference_volume"], j["temp_nodes"])
+                        disp = self._displacement_array_from_transform(
+                            dvf_to_use, j["reference_volume"], j["temp_nodes"]
+                        )
                         if disp is not None:
                             disp_arr = np.array(disp, dtype=np.float32, copy=False)
                             if disp_arr.ndim == 4 and disp_arr.shape[-1] == 3:
@@ -1404,9 +1437,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     _tick()
 
             def _err(exc):
-                logger.exception(
-                    f"Dose {dose_idx}: Failed to deform with DVF {dvf_idx} (frame {frame_idx}): {exc}"
-                )
+                logger.exception(f"Dose {dose_idx}: Failed to deform with DVF {dvf_idx} (frame {frame_idx}): {exc}")
                 _fail(f"Deformation failed: {exc}")
 
             self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
@@ -1420,25 +1451,29 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         try:
             base_folder = os.path.join(export_dir, "sCT")
             vol_name = self._safe_node_name(volume_node)
-            sct_folder = os.path.join(base_folder, f"{int(session_idx):03d}_{self._safe_path_component(vol_name, 'sCT')}")
+            sct_folder = os.path.join(
+                base_folder, f"{int(session_idx):03d}_{self._safe_path_component(vol_name, 'sCT')}"
+            )
             os.makedirs(sct_folder, exist_ok=True)
 
             import DICOMScalarVolumePlugin
 
-            shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-            export_item_id = shNode.GetItemByDataNode(volume_node)
+            sh_node = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+            export_item_id = sh_node.GetItemByDataNode(volume_node)
             if export_item_id == 0:
                 logger.error("Could not find subject hierarchy item for volume to export")
                 return 0
-            refCtItemID = shNode.GetItemByDataNode(ref_ct_node)
-            studyItemID = shNode.GetItemParent(refCtItemID)
-            shNode.SetItemParent(export_item_id, studyItemID)
+            ref_ct_item_id = sh_node.GetItemByDataNode(ref_ct_node)
+            study_item_id = sh_node.GetItemParent(ref_ct_item_id)
+            sh_node.SetItemParent(export_item_id, study_item_id)
 
             exporter = DICOMScalarVolumePlugin.DICOMScalarVolumePluginClass()
             exportables = exporter.examineForExport(export_item_id)
             metadata = self._extract_ref_ct_metadata(ref_ct_node)
             for exp in exportables:
-                self._configure_export_tags(exp, sct_folder, metadata, 1000 + session_idx, f"Synthetic CT - {volume_node.GetName()}")
+                self._configure_export_tags(
+                    exp, sct_folder, metadata, 1000 + session_idx, f"Synthetic CT - {volume_node.GetName()}"
+                )
             exporter.export(exportables)
             logger.info(f"Exported sCT (session {session_idx+1}) to DICOM: {sct_folder}")
             return 1
@@ -1448,7 +1483,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         except AttributeError as e:
             logger.error(f"Unexpected node attribute error: {e}")
             return 0
-        except Exception as e:
+        except Exception:
             logger.exception(f"Failed to export sCT session {session_idx+1}")
             return 0
 
@@ -1462,18 +1497,20 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
             base_folder = os.path.join(export_dir, "sCT")
             seq_name = self._safe_node_name(sequence_node)
-            seq_root_folder = os.path.join(base_folder, f"{int(session_idx):03d}_{self._safe_path_component(seq_name, 'sCT_sequence')}")
+            seq_root_folder = os.path.join(
+                base_folder, f"{int(session_idx):03d}_{self._safe_path_component(seq_name, 'sCT_sequence')}"
+            )
             os.makedirs(seq_root_folder, exist_ok=True)
 
             import DICOMScalarVolumePlugin
-            
-            shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-            refCtItemID = shNode.GetItemByDataNode(ref_ct_node) if ref_ct_node is not None else 0
-            if refCtItemID == 0:
+
+            sh_node = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+            ref_ct_item_id = sh_node.GetItemByDataNode(ref_ct_node) if ref_ct_node is not None else 0
+            if ref_ct_item_id == 0:
                 logger.error("Could not find subject hierarchy item for reference CT")
                 return 0
 
-            studyItemID = refCtItemID
+            study_item_id = ref_ct_item_id
             metadata = self._extract_ref_ct_metadata(ref_ct_node)
             for item_idx in range(num_items):
                 try:
@@ -1484,14 +1521,16 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     export_node = frame_node
                     temp_node = None
                     try:
-                        temp_node = slicer.mrmlScene.AddNewNodeByClass(frame_node.GetClassName(), f"{sequence_node.GetName()}_{item_idx}")
+                        temp_node = slicer.mrmlScene.AddNewNodeByClass(
+                            frame_node.GetClassName(), f"{sequence_node.GetName()}_{item_idx}"
+                        )
                         temp_node.Copy(frame_node)
                         export_node = temp_node
 
                         exporter = DICOMScalarVolumePlugin.DICOMScalarVolumePluginClass()
-                        export_item_id = shNode.GetItemByDataNode(export_node)
-                       
-                        shNode.SetItemParent(export_item_id, studyItemID)
+                        export_item_id = sh_node.GetItemByDataNode(export_node)
+
+                        sh_node.SetItemParent(export_item_id, study_item_id)
                         exportables = exporter.examineForExport(export_item_id)
 
                         frame_id = export_node.GetID() if hasattr(export_node, "GetID") else None
@@ -1519,9 +1558,17 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                         frame_folder = os.path.join(seq_root_folder, f"frame_{int(item_idx):04d}")
                         os.makedirs(frame_folder, exist_ok=True)
                         for exp in exportables:
-                            self._configure_export_tags(exp, frame_folder, metadata, 2000 + session_idx * 100 + item_idx, f"sCT Sequence - Frame {item_idx}")
+                            self._configure_export_tags(
+                                exp,
+                                frame_folder,
+                                metadata,
+                                2000 + session_idx * 100 + item_idx,
+                                f"sCT Sequence - Frame {item_idx}",
+                            )
                         exporter.export(exportables)
-                        logger.info(f"Exported sCT sequence item {item_idx} (session {session_idx+1}) to DICOM: {frame_folder}")
+                        logger.info(
+                            f"Exported sCT sequence item {item_idx} (session {session_idx+1}) to DICOM: {frame_folder}"
+                        )
                         exported_count += 1
                     finally:
                         if temp_node is not None:

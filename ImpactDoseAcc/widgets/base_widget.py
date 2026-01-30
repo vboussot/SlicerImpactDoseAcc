@@ -1,12 +1,12 @@
 import logging
-from uuid import uuid4
 import os
-from typing import Iterable, Optional
+from collections.abc import Iterable
+from uuid import uuid4
 
 import numpy as np
 import slicer
 import vtk
-from qt import QVBoxLayout, QWidget, QTimer
+from qt import QTimer, QVBoxLayout, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class BaseImpactWidget(QWidget):
     def _is_name_match(self, node, needle: str) -> bool:
         try:
             return str(needle).lower() in self._safe_node_name(node).lower()
-        except Exception as e:
+        except Exception:
             logger.exception("_is_name_match failed")
             return False
 
@@ -49,7 +49,7 @@ class BaseImpactWidget(QWidget):
             except Exception:
                 logger.exception("Error removing CLI node from scene")
 
-        def _finish(ok: bool, err: Exception = None):
+        def _finish(ok: bool, err: Exception | None = None):
             if holder.get("handled", False):
                 return
             holder["handled"] = True
@@ -121,6 +121,7 @@ class BaseImpactWidget(QWidget):
                 on_error(exc)
             except Exception:
                 logger.exception("on_error raised while handling observer add failure")
+
     def __init__(self, logic=None):
         super().__init__()
         self.logic = logic
@@ -164,7 +165,7 @@ class BaseImpactWidget(QWidget):
         try:
             val = text_attr() if callable(text_attr) else text_attr
             return "" if val is None else str(val)
-        except Exception as e:
+        except Exception:
             logger.exception("_line_edit_text failed")
             return ""
 
@@ -173,7 +174,7 @@ class BaseImpactWidget(QWidget):
             return ""
         try:
             return node.GetName() or ""
-        except Exception as e:
+        except Exception:
             logger.exception("_safe_node_name failed")
             return ""
 
@@ -194,10 +195,10 @@ class BaseImpactWidget(QWidget):
         target = getattr(self, "_root_widget", None) or self
         try:
             target.setEnabled(not bool(busy))
-        except Exception as e:
+        except Exception:
             logger.exception("_set_ui_busy failed")
 
-    def _generate_default_output_name(self, prefix: str = "out") -> str:
+    def _generate_default_output_name(self, prefix: str) -> str:
         return f"{prefix}_{uuid4().hex[:2]}"
 
     # --- MRML helpers ---
@@ -206,7 +207,7 @@ class BaseImpactWidget(QWidget):
             return None
         try:
             return slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-        except Exception as e:
+        except Exception:
             logger.exception("_get_sh_node failed")
             return None
 
@@ -219,18 +220,16 @@ class BaseImpactWidget(QWidget):
                 arr = fn(segmentation_node, segment_id, reference_volume_node)
                 if arr is None:
                     return None
-                return (np.asarray(arr) > 0)
-        except Exception as e:
+                return np.asarray(arr) > 0
+        except Exception:
             logger.exception("arrayFromSegmentBinaryLabelmap call failed")
 
-        labelmap = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:3]}"
-        )
+        labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:3]}")
         try:
             labelmap.SetHideFromEditors(1)
             labelmap.SetSelectable(0)
             labelmap.SetSaveWithScene(0)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set labelmap properties")
 
         try:
@@ -240,7 +239,7 @@ class BaseImpactWidget(QWidget):
             seg_logic.ExportSegmentsToLabelmapNode(segmentation_node, seg_ids, labelmap, reference_volume_node)
             arr = slicer.util.arrayFromVolume(labelmap)
             return np.asarray(arr) > 0
-        except Exception as e:
+        except Exception:
             logger.exception("ExportSegmentsToLabelmapNode or arrayFromVolume failed")
             return None
         finally:
@@ -258,8 +257,9 @@ class BaseImpactWidget(QWidget):
             "DICOM.DoseGridScaling",
             "DICOM.RTDOSE.DoseGridScaling",
             "RTDOSE.DoseGridScaling",
-            "DicomRtDoseGridScaling")
-        
+            "DicomRtDoseGridScaling",
+        )
+
         for k in keys:
             v = node.GetAttribute(k)
             if not v:
@@ -270,7 +270,9 @@ class BaseImpactWidget(QWidget):
 
         return 1.0
 
-    def set_background_volume(self, volume_node, layout: str = "FourUp", viewers: Iterable[str] = ("Red", "Yellow", "Green")):
+    def set_background_volume(
+        self, volume_node, layout: str = "FourUp", viewers: Iterable[str] = ("Red", "Yellow", "Green")
+    ):
         if slicer.app is None or slicer.mrmlScene is None or volume_node is None:
             return
         try:
@@ -290,11 +292,11 @@ class BaseImpactWidget(QWidget):
                         continue
                     comp = sw.sliceLogic().GetSliceCompositeNode()
                     comp.SetBackgroundVolumeID(volume_node.GetID())
-                except Exception as e:
+                except Exception:
                     logger.exception("set_background_volume: failed while setting background for view %s", view_name)
             try:
                 lm.resetSliceViews()
-            except Exception as e:
+            except Exception:
                 logger.exception("set_background_volume: resetSliceViews failed")
         except Exception:
             pass
@@ -304,14 +306,14 @@ class BaseImpactWidget(QWidget):
             return None
         try:
             node = slicer.mrmlScene.GetFirstNodeByName(name)
-        except Exception as e:
+        except Exception:
             logger.exception("get_or_add_node: GetFirstNodeByName failed for %s", name)
             node = None
         if node is not None and hasattr(node, "IsA") and node.IsA(class_name):
             return node
         try:
             return slicer.mrmlScene.AddNewNodeByClass(class_name, name)
-        except Exception as e:
+        except Exception:
             logger.exception("get_or_add_node: AddNewNodeByClass failed for %s (%s)", (name, class_name))
             return None
 
@@ -319,27 +321,28 @@ class BaseImpactWidget(QWidget):
         try:
             if node is not None and slicer.mrmlScene is not None and node.GetScene() == slicer.mrmlScene:
                 slicer.mrmlScene.RemoveNode(node)
-        except Exception as e:
+        except Exception:
             logger.exception("safe_remove failed")
 
     def _find_uncertainty_in_same_folder(self, dose_node):
         """Return an uncertainty volume that lives in the same Subject Hierarchy folder as the given dose volume.
 
-        Preference order: prefer names matching 'uncertainty_{base}' or 'uncertainty_dose_{base}', otherwise return first uncertainty in the same folder.
+        Preference order: prefer names matching 'uncertainty_{base}' or 'uncertainty_dose_{base}',
+        otherwise return first uncertainty in the same folder.
         """
         if slicer.mrmlScene is None or dose_node is None:
             return None
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return None
         try:
-            dose_item = int(shNode.GetItemByDataNode(dose_node) or 0)
+            dose_item = int(sh_node.GetItemByDataNode(dose_node) or 0)
         except Exception:
             dose_item = 0
         if not dose_item:
             return None
         try:
-            parent = int(shNode.GetItemParent(dose_item) or 0)
+            parent = int(sh_node.GetItemParent(dose_item) or 0)
         except Exception:
             parent = 0
         if not parent:
@@ -361,7 +364,7 @@ class BaseImpactWidget(QWidget):
 
         ids = vtk.vtkIdList()
         try:
-            shNode.GetItemChildren(parent, ids)
+            sh_node.GetItemChildren(parent, ids)
         except Exception:
             return None
 
@@ -372,7 +375,7 @@ class BaseImpactWidget(QWidget):
             except Exception:
                 continue
             try:
-                n = shNode.GetItemDataNode(child)
+                n = sh_node.GetItemDataNode(child)
             except Exception:
                 n = None
             if n is None or not hasattr(n, "IsA") or not n.IsA("vtkMRMLScalarVolumeNode"):

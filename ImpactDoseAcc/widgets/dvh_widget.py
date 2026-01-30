@@ -1,21 +1,15 @@
+import io
+import logging
+import os
 from uuid import uuid4
 
-import io
 import numpy as np
-import os
 import slicer
 import vtk
-from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
-import importlib.util
-from pathlib import Path
-import logging
-logger = logging.getLogger(__name__)
+from qt import QCheckBox, QMessageBox, QTimer, QVBoxLayout
+from widgets.base_widget import BaseImpactWidget
 
-base_path = Path(__file__).resolve().parent / "base_widget.py"
-spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
-base_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(base_mod)  # type: ignore
-BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
+logger = logging.getLogger(__name__)
 
 
 class DVHWidget(BaseImpactWidget):
@@ -41,10 +35,6 @@ class DVHWidget(BaseImpactWidget):
         self._last_png_path = None
         self._last_out_base = None
         self._setup_ui()
-
-
-    def _generate_default_output_name(self) -> str:
-        return f"dvh_{uuid4().hex[:6]}"
 
     def _setup_ui(self) -> None:
         ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/DVHWidget.ui"))
@@ -114,7 +104,7 @@ class DVHWidget(BaseImpactWidget):
 
         if self.output_name_edit is not None:
             try:
-                self.output_name_edit.setText(self._generate_default_output_name())
+                self.output_name_edit.setText(self._generate_default_output_name(prefix="dvh"))
             except Exception:
                 pass
 
@@ -157,7 +147,11 @@ class DVHWidget(BaseImpactWidget):
             pass
 
         try:
-            if self._plot_view_node is not None and hasattr(self._plot_view_node, "SetPlotChartNodeID") and hasattr(chart_node, "GetID"):
+            if (
+                self._plot_view_node is not None
+                and hasattr(self._plot_view_node, "SetPlotChartNodeID")
+                and hasattr(chart_node, "GetID")
+            ):
                 try:
                     self._plot_view_node.SetPlotChartNodeID(chart_node.GetID())
                 except Exception:
@@ -172,7 +166,6 @@ class DVHWidget(BaseImpactWidget):
                 self.plot_widget.setMRMLPlotChartNodeID(chart_node.GetID())
         except Exception:
             pass
-
 
     def _ensure_embedded_plot_view(self) -> None:
         if self.plot_widget is None or slicer.mrmlScene is None:
@@ -268,7 +261,6 @@ class DVHWidget(BaseImpactWidget):
                 "</div>"
             )
 
-
             html = "<div>"
             if structure_lines:
                 html += "<div><b>Structures</b></div>" + "".join(structure_lines)
@@ -289,20 +281,20 @@ class DVHWidget(BaseImpactWidget):
         super()._set_ui_busy(busy)
         try:
             self.run_btn.setEnabled(not bool(busy))
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set run_btn enabled state")
         try:
             self.dose_combo_a.setEnabled(not bool(busy))
             self.dose_combo_b.setEnabled(not bool(busy))
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set dose combo enabled state")
         try:
             self.seg_selector.setEnabled(not bool(busy))
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set seg_selector enabled state")
         try:
             self.output_name_edit.setEnabled(not bool(busy))
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set output_name_edit enabled state")
         # Uncertainty checkboxes: always disable while running; restore eligibility after.
         if bool(busy):
@@ -316,7 +308,6 @@ class DVHWidget(BaseImpactWidget):
                 self._on_dose_selection_changed()
             except Exception:
                 logger.exception("_on_dose_selection_changed raised when restoring UI busy state")
-
 
     def _selected_dose_node_a(self):
         try:
@@ -466,6 +457,7 @@ class DVHWidget(BaseImpactWidget):
             return [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
         except Exception:
             return []
+
     # show_png removed per user request
 
     def _load_png_node(self, path: str, name: str):
@@ -579,13 +571,11 @@ class DVHWidget(BaseImpactWidget):
                 arr = fn(segmentation_node, segment_id, reference_volume_node)
                 if arr is None:
                     return None
-                return (np.asarray(arr) > 0)
+                return np.asarray(arr) > 0
         except Exception:
             pass
 
-        labelmap = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:6]}"
-        )
+        labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:6]}")
         try:
             labelmap.SetHideFromEditors(1)
             labelmap.SetSelectable(0)
@@ -674,9 +664,13 @@ class DVHWidget(BaseImpactWidget):
 
         # Resolve uncertainty volumes (only if enabled & available in same folder).
         unc_a = self._find_uncertainty_in_same_folder(dose_a) if bool(self.cb_unc_a.isChecked()) else None
-        unc_b = self._find_uncertainty_in_same_folder(dose_b) if (dose_b is not None and bool(self.cb_unc_b.isChecked())) else None
+        unc_b = (
+            self._find_uncertainty_in_same_folder(dose_b)
+            if (dose_b is not None and bool(self.cb_unc_b.isChecked()))
+            else None
+        )
 
-        out_base = (self.output_name_edit.text or "")
+        out_base = self.output_name_edit.text or ""
         try:
             out_base = out_base() if callable(out_base) else out_base
         except Exception:
@@ -695,7 +689,6 @@ class DVHWidget(BaseImpactWidget):
             "stage": "start",
             "seg_color_by_id": {},
         }
-
 
         self._last_out_base = out_base
 
@@ -872,7 +865,7 @@ class DVHWidget(BaseImpactWidget):
         # Resolve per-dose uncertainty arrays (if requested).
         j["_dose_arr_by_label"] = {}
         j["_unc_arr_by_label"] = {}
-        for label, node, darr in zip(dose_labels, [dose_a] + ([dose_b] if dose_b is not None else []), dose_arrays):
+        for label, _, darr in zip(dose_labels, [dose_a] + ([dose_b] if dose_b is not None else []), dose_arrays):
             j["_dose_arr_by_label"][label] = darr
             unc_node = unc_a if label == "A" else unc_b
             if unc_node is not None:
@@ -1130,14 +1123,18 @@ class DVHWidget(BaseImpactWidget):
                 col_base = _safe_col_base(label)
                 col_vpct = f"{col_base} | V%"
                 col_vcc = f"{col_base} | Vcc"
-                vp = vtk.vtkFloatArray(); vp.SetName(col_vpct); vp.SetNumberOfTuples(nrows)
-                vc = vtk.vtkFloatArray(); vc.SetName(col_vcc); vc.SetNumberOfTuples(nrows)
+                vp = vtk.vtkFloatArray()
+                vp.SetName(col_vpct)
+                vp.SetNumberOfTuples(nrows)
+                vc = vtk.vtkFloatArray()
+                vc.SetName(col_vcc)
+                vc.SetNumberOfTuples(nrows)
                 table.AddColumn(vp)
                 table.AddColumn(vc)
                 col_specs.append((col_vpct, col_vcc, c))
 
             # Fill curve columns
-            for ci, (col_vpct, col_vcc, c) in enumerate(col_specs):
+            for ci, (_, _, c) in enumerate(col_specs):
                 vpct = np.asarray(c.get("vpct"), dtype=np.float32)
                 vcc = np.asarray(c.get("vcc"), dtype=np.float32)
                 if vpct.size != nrows:
@@ -1158,8 +1155,9 @@ class DVHWidget(BaseImpactWidget):
                         matplotlib.set_loglevel("warning")
                     except Exception:
                         pass
-                    import matplotlib.pyplot as plt
                     import tempfile
+
+                    import matplotlib.pyplot as plt
                 except Exception:
                     return None
 
@@ -1218,7 +1216,9 @@ class DVHWidget(BaseImpactWidget):
                                 if unc_patch_handle is None:
                                     from matplotlib.patches import Patch
 
-                                    unc_patch_handle = Patch(facecolor="#9ca3af", edgecolor="#4b5563", alpha=0.35, label="Uncertainty (±3σ)")
+                                    unc_patch_handle = Patch(
+                                        facecolor="#9ca3af", edgecolor="#4b5563", alpha=0.35, label="Uncertainty (±3σ)"
+                                    )
                             except Exception:
                                 pass
                     try:
@@ -1248,7 +1248,9 @@ class DVHWidget(BaseImpactWidget):
 
                     legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="-", label="Dose ref"))
                     legend_labels.append("Dose ref")
-                    legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="--", label="Dose estimated"))
+                    legend_handles.append(
+                        Line2D([], [], color="#111827", lw=1.8, linestyle="--", label="Dose estimated")
+                    )
                     legend_labels.append("Dose estimated")
 
                     if unc_patch_handle is not None:
@@ -1328,7 +1330,9 @@ class DVHWidget(BaseImpactWidget):
                 series_index = 0
                 created_series_nodes = []
 
-                def _add_line_series(y_col: str, rgb, name_suffix: str, width: int, dashed: bool, opacity=None, label=None) -> None:
+                def _add_line_series(
+                    y_col: str, rgb, name_suffix: str, width: int, dashed: bool, opacity=None, label=None
+                ) -> None:
                     nonlocal series_index
                     sname = f"{table_name}_{series_index:02d}_{name_suffix}"
                     series_index += 1
@@ -1396,7 +1400,7 @@ class DVHWidget(BaseImpactWidget):
                     kind = str(c.get("kind", ""))
                     dose_label = str(c.get("dose_label", ""))
                     rgb = c.get("color", None) or (0.0, 0.0, 0.0)
-                    dashed = (dose_label == "B")
+                    dashed = dose_label == "B"
                     try:
                         struct_label = str(c.get("seg_name", "") or "")
                     except Exception:
@@ -1404,8 +1408,9 @@ class DVHWidget(BaseImpactWidget):
                     if "sigma" in kind:
                         _add_line_series(col_vpct, rgb, "unc", width=2, dashed=False, opacity=0.35, label=struct_label)
                     else:
-                        _add_line_series(col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None, label=struct_label)
-
+                        _add_line_series(
+                            col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None, label=struct_label
+                        )
 
                 chart_node.SetTitle(table_name)
                 chart_node.SetXAxisTitle("Dose (Gy)")
@@ -1452,8 +1457,8 @@ class DVHWidget(BaseImpactWidget):
 
                 # Move created nodes into a SubjectHierarchy folder to reduce node clutter.
                 try:
-                    shNode = self._get_sh_node()
-                    if shNode is not None:
+                    sh_node = self._get_sh_node()
+                    if sh_node is not None:
                         # Parent folder: try to use the same folder as Dose A when available.
                         parent_item = 0
                         try:
@@ -1463,14 +1468,14 @@ class DVHWidget(BaseImpactWidget):
                             dose_a = None
                         try:
                             if dose_a is not None:
-                                dose_item = int(shNode.GetItemByDataNode(dose_a) or 0)
+                                dose_item = int(sh_node.GetItemByDataNode(dose_a) or 0)
                                 if dose_item:
-                                    parent_item = int(shNode.GetItemParent(dose_item) or 0)
+                                    parent_item = int(sh_node.GetItemParent(dose_item) or 0)
                         except Exception:
                             parent_item = 0
                         if not parent_item:
                             try:
-                                parent_item = int(shNode.GetSceneItemID() or 0)
+                                parent_item = int(sh_node.GetSceneItemID() or 0)
                             except Exception:
                                 parent_item = 0
 
@@ -1478,11 +1483,11 @@ class DVHWidget(BaseImpactWidget):
                         def _find_child_folder(parent, name):
                             try:
                                 ids = vtk.vtkIdList()
-                                shNode.GetItemChildren(parent, ids)
+                                sh_node.GetItemChildren(parent, ids)
                                 for ii in range(ids.GetNumberOfIds()):
                                     child = ids.GetId(ii)
                                     try:
-                                        if shNode.GetItemName(child) == name:
+                                        if sh_node.GetItemName(child) == name:
                                             return int(child)
                                     except Exception:
                                         continue
@@ -1493,14 +1498,14 @@ class DVHWidget(BaseImpactWidget):
                         dvh_root = _find_child_folder(parent_item, "DVH")
                         if not dvh_root:
                             try:
-                                dvh_root = int(shNode.CreateFolderItem(parent_item, "DVH") or 0)
+                                dvh_root = int(sh_node.CreateFolderItem(parent_item, "DVH") or 0)
                             except Exception:
                                 dvh_root = 0
                         run_folder_name = str(table_name)
                         run_folder = _find_child_folder(dvh_root, run_folder_name) if dvh_root else 0
                         if dvh_root and not run_folder:
                             try:
-                                run_folder = int(shNode.CreateFolderItem(dvh_root, run_folder_name) or 0)
+                                run_folder = int(sh_node.CreateFolderItem(dvh_root, run_folder_name) or 0)
                             except Exception:
                                 run_folder = 0
 
@@ -1508,13 +1513,13 @@ class DVHWidget(BaseImpactWidget):
                             if node is None or not parent_folder_item:
                                 return
                             try:
-                                item = int(shNode.GetItemByDataNode(node) or 0)
+                                item = int(sh_node.GetItemByDataNode(node) or 0)
                             except Exception:
                                 item = 0
                             if not item:
                                 return
                             try:
-                                shNode.SetItemParent(item, int(parent_folder_item))
+                                sh_node.SetItemParent(item, int(parent_folder_item))
                             except Exception:
                                 pass
 

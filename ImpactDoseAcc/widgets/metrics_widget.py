@@ -1,82 +1,27 @@
+import logging
 import os
+import sys
 import threading
 from uuid import uuid4
-from typing import Optional
-import inspect
 
 import numpy as np
 import slicer
 import vtk
-from qt import QVBoxLayout, QCheckBox, QMessageBox, QTimer
-import logging
-logger = logging.getLogger(__name__)
-import sys
-from datetime import datetime
-
-import importlib.util
-from pathlib import Path
+from qt import QCheckBox, QMessageBox, QTimer, QVBoxLayout
+from widgets.base_widget import BaseImpactWidget
 
 os.environ["NUMBA_THREADING_LAYER"] = "omp"
 
-base_path = Path(__file__).resolve().parent / "base_widget.py"
-spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
-base_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(base_mod)  # type: ignore
-BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(
-    level=(logging.DEBUG),   # DEBUG | INFO | WARNING
+    level=(logging.DEBUG),  # DEBUG | INFO | WARNING
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
     force=True,
 )
 logging.getLogger("pymedphys").setLevel(logging.DEBUG)
 logging.getLogger("pymedphys.gamma").setLevel(logging.DEBUG)
-
-
-def _available_memory_bytes() -> Optional[int]:
-    """Return available system memory in bytes.
-
-    Tries psutil first (if present), then falls back to Linux /proc/meminfo.
-    """
-    try:
-        import psutil  # type: ignore
-
-        return int(psutil.virtual_memory().available)
-    except Exception:
-        pass
-
-    # Linux fallback
-    try:
-        with open("/proc/meminfo", "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if not line.startswith("MemAvailable:"):
-                    continue
-                parts = line.split()
-                if len(parts) >= 2:
-                    kb = int(parts[1])
-                    return kb * 1024
-    except Exception:
-        pass
-
-    return None
-
-
-def _ram_available_bytes(fraction: float = 0.8) -> Optional[int]:
-    """Compute ram_available for pymedphys.gamma in bytes as fraction of free memory."""
-    try:
-        frac = float(fraction)
-    except Exception:
-        frac = 0.8
-    frac = max(0.0, min(1.0, frac))
-
-    avail_b = _available_memory_bytes()
-    if avail_b is None:
-        return None
-    try:
-        return int(frac * float(avail_b))
-    except Exception:
-        return None
 
 
 class MetricsEvaluationWidget(BaseImpactWidget):
@@ -101,7 +46,8 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         # Bind widgets
         self.ref_dose_combo = self._w("ref_dose_combo")
         self.out_dose_combo = self._w("out_dose_combo")
-        # Output uncertainty: checkbox enabled only when an uncertainty volume exists in the same folder as the output dose
+        # Output uncertainty: checkbox enabled only when an
+        # uncertainty volume exists in the same folder as the output dose
         self.cb_unc_out = self._w("cb_unc_out")
         self._unc_node_by_index = {}  # kept for compatibility but not used when using folder-based uncertainty
         self.seg_selector = self._w("seg_selector")
@@ -199,14 +145,12 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             self.progress_bar.setValue(0)
             self.progress_bar.setVisible(False)
 
-
         layout = QVBoxLayout(self)
         layout.addWidget(ui_widget)
         self.setLayout(layout)
 
         self._refresh_lists()
         self._on_segmentation_changed(self.seg_selector.currentNode() if self.seg_selector is not None else None)
-
 
     def _clear_layout(self, layout) -> None:
         if layout is None:
@@ -274,8 +218,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         # spacer
         self._segments_scroll_layout.addStretch()
 
-
-
     def _refresh_lists(self) -> None:
         """Refresh filtered lists for reference/output dose and uncertainty."""
         if slicer.mrmlScene is None:
@@ -292,7 +234,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             out_prev = self._out_dose_node_by_index.get(self._combo_current_index(self.out_dose_combo), None)
         except Exception:
             out_prev = None
-
 
         def node_id(n):
             try:
@@ -421,6 +362,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     logger.exception("Failed updating uncertainty checkbox state")
         except Exception:
             logger.exception("_on_out_dose_changed failed")
+
     def _needs_resample_to_reference(self, input_node, reference_node) -> bool:
         if input_node is None or reference_node is None:
             return False
@@ -539,21 +481,19 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         if slicer.mrmlScene is None:
             return None
 
-        # Prefer Slicer utility API when available (avoids native crashes seen with some ExportSegmentsToLabelmapNode calls).
+        # Prefer Slicer utility API when available
         try:
             fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
             if callable(fn):
                 arr = fn(segmentation_node, segment_id, reference_volume_node)
                 if arr is None:
                     return None
-                return (np.asarray(arr) > 0)
+                return np.asarray(arr) > 0
         except Exception:
             # Fall back to labelmap export path below.
             pass
 
-        labelmap = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLLabelMapVolumeNode", f"tmp_seg_{uuid4().hex[:6]}"
-        )
+        labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_seg_{uuid4().hex[:6]}")
         try:
             labelmap.SetHideFromEditors(1)
             labelmap.SetSelectable(0)
@@ -607,118 +547,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 pass
 
         return mask
-
-    def _segments_bbox(self, segmentation_node, segment_ids, reference_volume_node, margin_mm: float):
-        """Compute a (z0,z1,y0,y1,x0,x1) bbox (end-exclusive) around selected segments.
-
-        This is used to crop gamma computation to a small ROI to avoid OOM/crashes when
-        low-dose cutoff is small (large evaluation region).
-        """
-        if slicer.mrmlScene is None:
-            return None
-        if segmentation_node is None or reference_volume_node is None:
-            return None
-        if not segment_ids:
-            return None
-
-        # Convert margin (mm) to voxels for each axis (array is z,y,x).
-        try:
-            sx, sy, sz = (float(v) for v in reference_volume_node.GetSpacing())
-        except Exception:
-            sx, sy, sz = (1.0, 1.0, 1.0)
-        try:
-            mx = int(np.ceil(float(margin_mm) / max(sx, 1e-6))) + 2
-            my = int(np.ceil(float(margin_mm) / max(sy, 1e-6))) + 2
-            mz = int(np.ceil(float(margin_mm) / max(sz, 1e-6))) + 2
-        except Exception:
-            mx = my = mz = 2
-
-        # Prefer per-segment utility when available.
-        try:
-            fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
-            if callable(fn):
-                zmin = ymin = xmin = None
-                zmax = ymax = xmax = None
-                nz = ny = nx = None
-                for sid in list(segment_ids):
-                    try:
-                        arr = fn(segmentation_node, sid, reference_volume_node)
-                    except Exception:
-                        arr = None
-                    if arr is None:
-                        continue
-                    mask = np.asarray(arr) > 0
-                    if nz is None:
-                        nz, ny, nx = mask.shape
-                    if not np.any(mask):
-                        continue
-                    zz, yy, xx = np.where(mask)
-                    zmin = int(zz.min()) if zmin is None else min(zmin, int(zz.min()))
-                    zmax = int(zz.max()) if zmax is None else max(zmax, int(zz.max()))
-                    ymin = int(yy.min()) if ymin is None else min(ymin, int(yy.min()))
-                    ymax = int(yy.max()) if ymax is None else max(ymax, int(yy.max()))
-                    xmin = int(xx.min()) if xmin is None else min(xmin, int(xx.min()))
-                    xmax = int(xx.max()) if xmax is None else max(xmax, int(xx.max()))
-
-                if nz is None or zmin is None:
-                    return None
-
-                z0 = max(0, zmin - mz)
-                z1 = min(int(nz), zmax + mz + 1)
-                y0 = max(0, ymin - my)
-                y1 = min(int(ny), ymax + my + 1)
-                x0 = max(0, xmin - mx)
-                x1 = min(int(nx), xmax + mx + 1)
-                return (z0, z1, y0, y1, x0, x1)
-        except Exception:
-            pass
-
-        # Fallback: export all selected segments into one labelmap.
-        labelmap = slicer.mrmlScene.AddNewNodeByClass(
-            "vtkMRMLLabelMapVolumeNode", f"tmp_bbox_{uuid4().hex[:6]}"
-        )
-        try:
-            labelmap.SetHideFromEditors(1)
-            labelmap.SetSelectable(0)
-            labelmap.SetSaveWithScene(0)
-        except Exception:
-            pass
-
-        arr = None
-        try:
-            seg_logic = slicer.modules.segmentations.logic()
-            seg_ids = vtk.vtkStringArray()
-            for sid in list(segment_ids):
-                seg_ids.InsertNextValue(str(sid))
-            seg_logic.ExportSegmentsToLabelmapNode(segmentation_node, seg_ids, labelmap, reference_volume_node)
-            arr = slicer.util.arrayFromVolume(labelmap)
-        except Exception:
-            arr = None
-        finally:
-            try:
-                if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(labelmap)
-            except Exception:
-                pass
-
-        if arr is None:
-            return None
-
-        try:
-            nz, ny, nx = arr.shape
-            mask = np.asarray(arr) > 0
-            if not np.any(mask):
-                return None
-            zz, yy, xx = np.where(mask)
-            z0 = max(0, int(zz.min()) - mz)
-            z1 = min(nz, int(zz.max()) + mz + 1)
-            y0 = max(0, int(yy.min()) - my)
-            y1 = min(ny, int(yy.max()) + my + 1)
-            x0 = max(0, int(xx.min()) - mx)
-            x1 = min(nx, int(xx.max()) + mx + 1)
-            return (z0, z1, y0, y1, x0, x1)
-        except Exception:
-            return None
 
     def _run_in_thread(self, fn, on_done, on_error, poll_ms: int = 100) -> None:
         state = {"done": False, "result": None, "error": None}
@@ -815,7 +643,9 @@ class MetricsEvaluationWidget(BaseImpactWidget):
 
         # Selected segments
         try:
-            selected_seg_ids = [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
+            selected_seg_ids = [
+                sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()
+            ]
         except Exception:
             selected_seg_ids = []
         if not selected_seg_ids:
@@ -832,7 +662,9 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             )
             return
 
-        out_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name(prefix="metrics")
+        out_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name(
+            prefix="metrics"
+        )
         table_node = self._create_or_get_table_node(out_name)
         if table_node is None:
             QMessageBox.warning(self, "Output Error", "Could not create output table node.")
@@ -925,28 +757,9 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 distance_mm_threshold = float(self._float_from_line_edit(self.gamma_dist_mm_edit, 2.0))
             except Exception:
                 distance_mm_threshold = 2.0
-            bbox = None
-            try:
-                bbox = self._segments_bbox(
-                    job["seg_node"],
-                    job.get("selected_seg_ids", []),
-                    job["out_dose_node"],
-                    margin_mm=float(distance_mm_threshold),
-                )
-            except Exception:
-                bbox = None
-            job["_gamma_bbox"] = bbox
 
-            # Pre-compute RAM budget for PyMedPhys (bytes). Keep it stable during one run.
-            job["_gamma_ram_available_bytes"] = _ram_available_bytes(0.8)
             # Gamma params/import preflight only when Gamma is enabled.
             if self.cb_gamma_pr.isChecked():
-                if job.get("_gamma_bbox") is None:
-                    _fail(
-                        "Gamma requires a valid ROI bbox around the selected segments, but it could not be computed. "
-                        "Check that selected segments intersect the output dose volume."
-                    )
-                    return
 
                 # Pre-compute gamma parameters on UI thread (avoid touching Qt widgets from worker thread).
                 try:
@@ -972,6 +785,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 }
 
             if self.cb_gamma_pr.isChecked():
+
                 self._set_status("Computing gamma (PyMedPhys)…")
 
                 # Gamma duration is hard to predict; advance progress slowly to provide feedback.
@@ -998,7 +812,11 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 _tick_gamma_progress()
 
                 def _gamma_fn():
-                    import pymedphys
+                    try:
+                        import pymedphys
+                    except ImportError:
+                        slicer.util.pip_install("pymedphys")
+                        import pymedphys
 
                     try:
                         sx, sy, sz = (float(v) for v in job["ref_eval_node"].GetSpacing())
@@ -1013,14 +831,14 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     interp_fraction = int(params.get("interp_fraction", 3))
                     max_gamma = float(params.get("max_gamma", 2))
 
-                    z0, z1, y0, y1, x0, x1 = job.get("_gamma_bbox")
-                    # Ensure contiguous crops for Numba kernels (can have a big perf impact).
-                    ref_crop = np.ascontiguousarray(job["_ref_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
-                    out_crop = np.ascontiguousarray(job["_out_arr"][z0:z1, y0:y1, x0:x1], dtype=np.float32)
+                    ref_crop = job["_ref_arr"].astype(np.float32)
+                    out_crop = job["_out_arr"].astype(np.float32)
                     # Build only the cropped axes to reduce allocations.
-                    zc = (np.arange(z0, z1, dtype=np.float32) * sz)
-                    yc = (np.arange(y0, y1, dtype=np.float32) * sy)
-                    xc = (np.arange(x0, x1, dtype=np.float32) * sx)
+
+                    # Build only the cropped axes to reduce allocations.
+                    zc = np.arange(0, job["_ref_arr"].shape[2], dtype=np.float32) * sz
+                    yc = np.arange(0, job["_ref_arr"].shape[1], dtype=np.float32) * sy
+                    xc = np.arange(0, job["_ref_arr"].shape[0], dtype=np.float32) * sx
                     axes_crop = (zc, yc, xc)
                     gamma_fn = pymedphys.gamma
 
@@ -1032,18 +850,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                         "max_gamma": max_gamma,
                         "local_gamma": local_gamma,
                         "skip_once_passed": True,
-                        "ram_available": job.get("_gamma_ram_available_bytes"),
                     }
-
-                    # Match the faster in-script defaults when available.
-                    try:
-                        sig = inspect.signature(gamma_fn)
-                        if "interp_algo" in sig.parameters:
-                            kwargs["interp_algo"] = "pymedphys"
-                        if "quiet" in sig.parameters:
-                            kwargs["quiet"] = True
-                    except Exception:
-                        pass
 
                     return gamma_fn(
                         axes_crop,

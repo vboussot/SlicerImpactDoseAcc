@@ -1,33 +1,16 @@
 # Import Qt classes nécessaires
 import logging
+import os
 from uuid import uuid4
-import os 
 
 import numpy as np
 import slicer
 import vtk
-from qt import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QCheckBox,
-    QDoubleSpinBox,
-    QMessageBox,
-    QTimer,
-    QWidget,
-)
-
-import importlib.util
-from pathlib import Path
-
-base_path = Path(__file__).resolve().parent / "base_widget.py"
-spec = importlib.util.spec_from_file_location("impactdoseacc_base_widget", str(base_path))
-base_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(base_mod)  # type: ignore
-BaseImpactWidget = getattr(base_mod, "BaseImpactWidget")
-
+from qt import QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, QTimer, QVBoxLayout, QWidget
+from widgets.base_widget import BaseImpactWidget
 
 logger = logging.getLogger(__name__)
+
 
 class DoseAccumulationWidget(BaseImpactWidget):
 
@@ -40,7 +23,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
         self._weight_spinboxes_by_id = {}
         self._active_job = None
         self._setup_ui()
-
 
     def _setup_ui(self) -> None:
         ui_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "../Resources/UI/AccumulationWidget.ui"))
@@ -76,7 +58,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self.strategy_combo.addItem("DVF magnitude-driven (anatomy) – uncertainty weighting from dvf_magnitude")
 
         if self.output_name_edit is not None:
-            self.output_name_edit.setText(self._generate_default_output_name())
+            self.output_name_edit.setText(self._generate_default_output_name(prefix="dose_acc"))
 
         if self.progress_bar is not None:
             self.progress_bar.setRange(0, 100)
@@ -103,8 +85,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         return super()._run_cli_async(cli_module, params, on_done, on_error)
 
     def _find_uncertainty_node(self, base: str):
-        """Find the uncertainty volume corresponding to a Phase-1 output base.
-        """
+        """Find the uncertainty volume corresponding to a Phase-1 output base."""
         if slicer.mrmlScene is None:
             return None
         b = str(base or "").strip()
@@ -144,9 +125,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
         # Keep listing synced with patient selection
         self._refresh_fraction_list()
 
-    def _generate_default_output_name(self) -> str:
-        return super()._generate_default_output_name(prefix="dose_acc")
-
     def _line_edit_text(self, line_edit) -> str:
         return super()._line_edit_text(line_edit)
 
@@ -155,7 +133,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
             return 1.0
         v = spin.value() if callable(getattr(spin, "value", None)) else getattr(spin, "value", 1.0)
         return float(v)
-
 
     def _needs_resample_to_reference(self, input_node, reference_node) -> bool:
         """Return True if input_node geometry differs from reference_node.
@@ -190,7 +167,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
             pass
         return False
 
-
     def _safe_node_name(self, node) -> str:
         return super()._safe_node_name(node)
 
@@ -198,7 +174,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         """Return True if a MRML node name corresponds to a Phase-1 dose_list output."""
         try:
             n = str(name or "")
-        except Exception as e:
+        except Exception:
             logger.exception("_is_fraction_proxy_name invalid name")
             return False
         return n.startswith("dose_list_")
@@ -210,7 +186,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
         except Exception:
             return ""
         return s[len("dose_list_") :] if s.startswith("dose_list_") else ""
-
 
     def _has_uncertainty_for_any_proxy(self, proxies) -> bool:
         for node in proxies or []:
@@ -235,26 +210,26 @@ class DoseAccumulationWidget(BaseImpactWidget):
         except Exception:
             return None
 
-    def _get_subject_item_id_from_sh(self, shNode, item_id: int):
+    def _get_subject_item_id_from_sh(self, sh_node, item_id: int):
         """Climb SH parents until we reach the Patient (subject) item.
 
         Fallback: returns the immediate parent if Patient level cannot be detected.
         """
-        if shNode is None or not item_id:
+        if sh_node is None or not item_id:
             return 0
         current = int(item_id)
         last_parent = 0
         for _ in range(20):
             level = ""
             try:
-                level = shNode.GetItemLevel(current)
+                level = sh_node.GetItemLevel(current)
             except Exception:
                 level = ""
             if str(level).lower() == "patient":
                 return current
             parent = 0
             try:
-                parent = shNode.GetItemParent(current)
+                parent = sh_node.GetItemParent(current)
             except Exception:
                 parent = 0
             if not parent:
@@ -267,33 +242,33 @@ class DoseAccumulationWidget(BaseImpactWidget):
         """Ensure node has an SH item and is parented under folder_item_id."""
         if slicer.mrmlScene is None or node is None or not folder_item_id:
             return
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return
-        item_id = shNode.GetItemByDataNode(node)
+        item_id = sh_node.GetItemByDataNode(node)
         if item_id == 0:
-            item_id = shNode.CreateItem(folder_item_id, node)
-        shNode.SetItemParent(item_id, folder_item_id)
+            item_id = sh_node.CreateItem(folder_item_id, node)
+        sh_node.SetItemParent(item_id, folder_item_id)
 
     def _get_or_create_output_folder_item(self, reference_node, folder_name: str):
         """Return a SubjectHierarchy folder item under the same subject (patient) as reference_node."""
         if slicer.mrmlScene is None or reference_node is None:
             return None
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return None
-        ref_item_id = shNode.GetItemByDataNode(reference_node)
+        ref_item_id = sh_node.GetItemByDataNode(reference_node)
         if ref_item_id == 0:
             return None
-        parent_item_id = self._get_subject_item_id_from_sh(shNode, int(ref_item_id)) or int(ref_item_id)
+        parent_item_id = self._get_subject_item_id_from_sh(sh_node, int(ref_item_id)) or int(ref_item_id)
 
         children = vtk.vtkIdList()
-        shNode.GetItemChildren(parent_item_id, children, False)
+        sh_node.GetItemChildren(parent_item_id, children, False)
         for i in range(children.GetNumberOfIds()):
             child_id = int(children.GetId(i))
-            if shNode.GetItemName(child_id) == folder_name and shNode.GetItemDataNode(child_id) is None:
+            if sh_node.GetItemName(child_id) == folder_name and sh_node.GetItemDataNode(child_id) is None:
                 return child_id
-        return shNode.CreateFolderItem(parent_item_id, folder_name)
+        return sh_node.CreateFolderItem(parent_item_id, folder_name)
 
     def _create_temp_resampled_volume(self, input_node, reference_node, interpolation: str = "linear"):
         out_name = f"{self._safe_node_name(input_node)}_resampled_{uuid4().hex[:6]}"
@@ -330,24 +305,24 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self.patient_combo.blockSignals(False)
             return
 
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             self.patient_combo.blockSignals(False)
             return
 
         try:
-            root_id = int(shNode.GetSceneItemID() or 0)
+            root_id = int(sh_node.GetSceneItemID() or 0)
         except Exception:
             root_id = 0
         if not root_id:
             try:
-                root_id = int(shNode.GetRootItemID() or 0)
+                root_id = int(sh_node.GetRootItemID() or 0)
             except Exception:
                 root_id = 0
 
         ids = vtk.vtkIdList()
         try:
-            shNode.GetItemChildren(root_id, ids, True)
+            sh_node.GetItemChildren(root_id, ids, True)
         except Exception:
             ids = vtk.vtkIdList()
 
@@ -356,20 +331,20 @@ class DoseAccumulationWidget(BaseImpactWidget):
             item_id = int(ids.GetId(i))
             level = ""
             try:
-                level = shNode.GetItemLevel(item_id)
+                level = sh_node.GetItemLevel(item_id)
             except Exception:
                 level = ""
             if str(level).lower() == "patient":
                 patient_ids.append(item_id)
 
-        patient_ids.sort(key=lambda pid: (shNode.GetItemName(pid) or "").lower())
+        patient_ids.sort(key=lambda pid: (sh_node.GetItemName(pid) or "").lower())
 
         match_index = 0
         idx = 1
         for pid in patient_ids:
             name = ""
             try:
-                name = shNode.GetItemName(pid) or ""
+                name = sh_node.GetItemName(pid) or ""
             except Exception:
                 name = ""
             self.patient_combo.addItem(name or f"Patient {pid}")
@@ -389,17 +364,17 @@ class DoseAccumulationWidget(BaseImpactWidget):
     def _node_patient_item_id(self, node) -> int:
         if node is None or slicer.mrmlScene is None:
             return 0
-        shNode = self._get_sh_node()
-        if shNode is None:
+        sh_node = self._get_sh_node()
+        if sh_node is None:
             return 0
         try:
-            item_id = int(shNode.GetItemByDataNode(node) or 0)
+            item_id = int(sh_node.GetItemByDataNode(node) or 0)
         except Exception:
             item_id = 0
         if not item_id:
             return 0
         try:
-            return int(self._get_subject_item_id_from_sh(shNode, item_id) or 0)
+            return int(self._get_subject_item_id_from_sh(sh_node, item_id) or 0)
         except Exception:
             return 0
 
@@ -565,7 +540,9 @@ class DoseAccumulationWidget(BaseImpactWidget):
             QMessageBox.warning(self, "Missing Inputs", "Select at least one dose_list output.")
             return
 
-        output_base_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name()
+        output_base_name = self._line_edit_text(self.output_name_edit).strip() or self._generate_default_output_name(
+            prefix="dose_acc"
+        )
         strategy_idx = self._combo_current_index(getattr(self, "strategy_combo", None))
         uncertainty_aware = int(strategy_idx) > 0
 
@@ -674,7 +651,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             return n.GetID() if n is not None and hasattr(n, "GetID") else None
 
         # Dose volumes
-        for dose_list_node, w in job["selected_items"]:
+        for dose_list_node, _ in job["selected_items"]:
             if dose_list_node is None:
                 continue
             key = _node_id(dose_list_node)
@@ -689,7 +666,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
         # Uncertainty volumes
         if job["uncertainty_aware"]:
-            for dose_list_node, w in job["selected_items"]:
+            for dose_list_node, _ in job["selected_items"]:
                 base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
                 if not base:
                     continue
@@ -705,7 +682,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
         # DVF magnitude volumes (for anatomy-driven weighting)
         if job["dvf_mag_weighting"]:
-            for dose_list_node, w in job["selected_items"]:
+            for dose_list_node, _ in job["selected_items"]:
                 base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
                 if not base:
                     continue
@@ -982,7 +959,11 @@ class DoseAccumulationWidget(BaseImpactWidget):
             sum_mean2 = sum_mean2.astype(np.float32, copy=False) / np.float32(sum_w2)
             sum_var2 = j.get("sum_var", None)
             if j.get("uncertainty_aware") and sum_var2 is not None:
-                if j.get("robust_uncertainty") and (j.get("top_vars") is not None) and int(j.get("n_var_contrib", 0)) >= 2:
+                if (
+                    j.get("robust_uncertainty")
+                    and (j.get("top_vars") is not None)
+                    and int(j.get("n_var_contrib", 0)) >= 2
+                ):
                     for tv in j.get("top_vars"):
                         if tv is not None:
                             sum_var2 = sum_var2 - tv
@@ -997,7 +978,8 @@ class DoseAccumulationWidget(BaseImpactWidget):
             if j.get("uncertainty_aware"):
                 if sum_var2 is None:
                     logger.info(
-                        "Classic Uncertainty Aware selected but no matching uncertainty_* volumes were found; skipping uncertainty output."
+                        "Classic Uncertainty Aware selected but no matching uncertainty_* volumes"
+                        " were found; skipping uncertainty output."
                     )
                 else:
                     unc_name = f"uncertainty_{j['output_base_name']}"
