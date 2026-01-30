@@ -9,7 +9,13 @@ import slicer
 import vtk
 from qt import QCheckBox, QMessageBox, QTimer, QVBoxLayout
 from widgets.base_widget import BaseImpactWidget
+try:
+    import pymedphys
+except ImportError:
+    slicer.util.pip_install("pymedphys")
+    import pymedphys
 
+    
 os.environ["NUMBA_THREADING_LAYER"] = "omp"
 
 logger = logging.getLogger(__name__)
@@ -34,7 +40,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         self._unc_node_by_index = {}
         self._segment_checkbox_by_id = {}
         self._active_job = None
-        self._pymedphys_preheated = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -813,12 +818,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
 
                 def _gamma_fn():
                     try:
-                        import pymedphys
-                    except ImportError:
-                        slicer.util.pip_install("pymedphys")
-                        import pymedphys
-
-                    try:
                         sx, sy, sz = (float(v) for v in job["ref_eval_node"].GetSpacing())
                     except Exception:
                         sx, sy, sz = (2.0, 2.0, 2.0)
@@ -836,9 +835,9 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     # Build only the cropped axes to reduce allocations.
 
                     # Build only the cropped axes to reduce allocations.
-                    zc = np.arange(0, job["_ref_arr"].shape[2], dtype=np.float32) * sz
+                    zc = np.arange(0, job["_ref_arr"].shape[0], dtype=np.float32) * sz
                     yc = np.arange(0, job["_ref_arr"].shape[1], dtype=np.float32) * sy
-                    xc = np.arange(0, job["_ref_arr"].shape[0], dtype=np.float32) * sx
+                    xc = np.arange(0, job["_ref_arr"].shape[2], dtype=np.float32) * sx
                     axes_crop = (zc, yc, xc)
                     gamma_fn = pymedphys.gamma
 
