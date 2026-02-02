@@ -32,7 +32,6 @@ Some example visualizations are available in the `docs/` folder:
   <img src="docs/QA.png" alt="QA example" width="45%" />
 </p>
 
-> Note: If you want the `ImpactDoseacc.png` logo to appear next to the title, add the file to the repository root (or update the `src` to point to an image inside `docs/`).
 
 ## Installation
 
