@@ -9,13 +9,12 @@ import slicer
 import vtk
 from qt import QCheckBox, QMessageBox, QTimer, QVBoxLayout
 from widgets.base_widget import BaseImpactWidget
-try:
-    import pymedphys
-except ImportError:
-    slicer.util.pip_install("pymedphys")
-    import pymedphys
 
-    
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
 os.environ["NUMBA_THREADING_LAYER"] = "omp"
 
 logger = logging.getLogger(__name__)
@@ -26,8 +25,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
     force=True,
 )
-logging.getLogger("pymedphys").setLevel(logging.DEBUG)
-logging.getLogger("pymedphys.gamma").setLevel(logging.DEBUG)
 
 
 class MetricsEvaluationWidget(BaseImpactWidget):
@@ -322,11 +319,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
 
         self.ref_dose_combo.blockSignals(False)
         self.out_dose_combo.blockSignals(False)
-        if getattr(self, "cb_unc_out", None) is not None:
-            try:
-                pass
-            except Exception:
-                logger.exception("Failed to restore uncertainty checkbox signals")
 
     def _selected_ref_dose_node(self):
         try:
@@ -396,22 +388,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             pass
         return False
 
-    def _create_temp_volume_from_array(self, reference_node, array, name_prefix: str):
-        volumes_logic = slicer.modules.volumes.logic()
-        if volumes_logic is None:
-            return None
-        node = volumes_logic.CloneVolume(reference_node, f"{name_prefix}_{uuid4().hex[:6]}")
-        try:
-            node.SetHideFromEditors(1)
-            node.SetSelectable(0)
-            node.SetSaveWithScene(0)
-        except Exception:
-            pass
-        ref_arr = slicer.util.arrayFromVolume(reference_node)
-        slicer.util.updateVolumeFromArray(node, np.asarray(array).astype(ref_arr.dtype, copy=False))
-        slicer.util.arrayFromVolumeModified(node)
-        return node
-
     def _float_from_line_edit(self, line_edit, default: float) -> float:
         # Supports both QLineEdit-like widgets and QDoubleSpinBox.
         if line_edit is None:
@@ -455,6 +431,80 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         except Exception:
             return None
 
+    def _ensure_node_in_sh_folder(self, node, folder_item_id):
+        if slicer.mrmlScene is None or node is None or not folder_item_id:
+            return
+        sh_node = self._get_sh_node()
+        if sh_node is None:
+            return
+        try:
+            item_id = sh_node.GetItemByDataNode(node)
+        except Exception:
+            item_id = 0
+        if item_id == 0:
+            try:
+                item_id = sh_node.CreateItem(folder_item_id, node)
+            except Exception:
+                item_id = 0
+        if item_id:
+            try:
+                sh_node.SetItemParent(item_id, folder_item_id)
+            except Exception:
+                pass
+
+    def _get_or_create_child_folder_item(self, reference_node, folder_name: str):
+        if slicer.mrmlScene is None or reference_node is None:
+            return None
+        sh_node = self._get_sh_node()
+        if sh_node is None:
+            return None
+        try:
+            ref_item_id = sh_node.GetItemByDataNode(reference_node)
+        except Exception:
+            ref_item_id = 0
+        if not ref_item_id:
+            return None
+
+        children = vtk.vtkIdList()
+        try:
+            sh_node.GetItemChildren(ref_item_id, children, False)
+        except Exception:
+            return None
+        for i in range(children.GetNumberOfIds()):
+            child_id = children.GetId(i)
+            try:
+                if sh_node.GetItemName(child_id) == folder_name and sh_node.GetItemDataNode(child_id) is None:
+                    return child_id
+            except Exception:
+                continue
+        try:
+            return sh_node.CreateFolderItem(ref_item_id, folder_name)
+        except Exception:
+            return None
+
+    def _get_output_dir_from_ref(self, reference_node, child_folder: str):
+        if reference_node is None:
+            return None
+        try:
+            storage = reference_node.GetStorageNode()
+        except Exception:
+            storage = None
+        if storage is None:
+            return None
+        try:
+            ref_path = storage.GetFileName()
+        except Exception:
+            ref_path = None
+        if not ref_path:
+            return None
+        try:
+            base_dir = os.path.dirname(ref_path)
+            out_dir = os.path.join(base_dir, child_folder)
+            os.makedirs(out_dir, exist_ok=True)
+            return out_dir
+        except Exception:
+            return None
+
     def _set_ui_busy(self, busy: bool) -> None:
         try:
             # Keep run button enabled while busy so it can act as a Stop button.
@@ -480,78 +530,6 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             self.output_name_edit.setEnabled(not bool(busy))
         except Exception:
             logger.exception("Failed to set output_name_edit enabled state")
-
-    def _export_segment_mask(self, segmentation_node, segment_id: str, reference_volume_node):
-        """Export one segment to a temporary labelmap in reference volume geometry and return a boolean mask."""
-        if slicer.mrmlScene is None:
-            return None
-
-        # Prefer Slicer utility API when available
-        try:
-            fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
-            if callable(fn):
-                arr = fn(segmentation_node, segment_id, reference_volume_node)
-                if arr is None:
-                    return None
-                return np.asarray(arr) > 0
-        except Exception:
-            # Fall back to labelmap export path below.
-            pass
-
-        labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_seg_{uuid4().hex[:6]}")
-        try:
-            labelmap.SetHideFromEditors(1)
-            labelmap.SetSelectable(0)
-            labelmap.SetSaveWithScene(0)
-        except Exception:
-            pass
-
-        try:
-            seg_logic = slicer.modules.segmentations.logic()
-            # Use vtkStringArray for maximum compatibility (some builds crash on Python list inputs).
-            seg_ids = vtk.vtkStringArray()
-            seg_ids.InsertNextValue(str(segment_id))
-            seg_logic.ExportSegmentsToLabelmapNode(segmentation_node, seg_ids, labelmap, reference_volume_node)
-            arr = slicer.util.arrayFromVolume(labelmap)
-            mask = np.asarray(arr) > 0
-        except Exception:
-            # Fallback: use ExportVisibleSegmentsToLabelmapNode by toggling visibility.
-            mask = None
-            try:
-                disp = segmentation_node.GetDisplayNode()
-                if disp is None:
-                    segmentation_node.CreateDefaultDisplayNodes()
-                    disp = segmentation_node.GetDisplayNode()
-                prev_vis = {}
-                seg = segmentation_node.GetSegmentation()
-                n = seg.GetNumberOfSegments() if seg is not None else 0
-                for i in range(n):
-                    sid = seg.GetNthSegmentID(i)
-                    try:
-                        prev_vis[sid] = bool(disp.GetSegmentVisibility(sid))
-                        disp.SetSegmentVisibility(sid, sid == segment_id)
-                    except Exception:
-                        pass
-                seg_logic = slicer.modules.segmentations.logic()
-                seg_logic.ExportVisibleSegmentsToLabelmapNode(segmentation_node, labelmap, reference_volume_node)
-                arr = slicer.util.arrayFromVolume(labelmap)
-                mask = np.asarray(arr) > 0
-                # restore
-                for sid, vis in prev_vis.items():
-                    try:
-                        disp.SetSegmentVisibility(sid, bool(vis))
-                    except Exception:
-                        pass
-            except Exception:
-                mask = None
-        finally:
-            try:
-                if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
-                    slicer.mrmlScene.RemoveNode(labelmap)
-            except Exception:
-                pass
-
-        return mask
 
     def _run_in_thread(self, fn, on_done, on_error, poll_ms: int = 100) -> None:
         state = {"done": False, "result": None, "error": None}
@@ -675,6 +653,10 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             QMessageBox.warning(self, "Output Error", "Could not create output table node.")
             return
 
+        folder_item_id = self._get_or_create_child_folder_item(ref_dose_node, "metrics")
+        if folder_item_id:
+            self._ensure_node_in_sh_folder(table_node, folder_item_id)
+
         # Start async job state
         self._active_job = {
             "out_name": out_name,
@@ -692,6 +674,8 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             "stage": "start",
             "cancelled": False,
             "_cli_node": None,
+            "_metrics_folder_item_id": folder_item_id,
+            "_metrics_output_dir": self._get_output_dir_from_ref(ref_dose_node, "metrics"),
         }
 
         self._set_ui_busy(True)
@@ -786,12 +770,35 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     "lower_percent_dose_cutoff": lower_percent_dose_cutoff,
                     "local_gamma": local_gamma,
                     "interp_fraction": 3,
-                    "max_gamma": 1,
                 }
 
-            if self.cb_gamma_pr.isChecked():
-
-                self._set_status("Computing gamma (PyMedPhys)…")
+                try:
+                    spacing = tuple(job["ref_eval_node"].GetSpacing())
+                    job["_gamma_spacing"] = spacing
+                except Exception:
+                    job["_gamma_spacing"] = None
+                try:
+                    m = vtk.vtkMatrix4x4()
+                    job["ref_eval_node"].GetIJKToRASMatrix(m)
+                    # Direction in RAS from IJKToRAS (columns scaled by spacing)
+                    sx, sy, sz = job.get("_gamma_spacing") or (1.0, 1.0, 1.0)
+                    dir_ras = [
+                        [m.GetElement(0, 0) / sx, m.GetElement(0, 1) / sy, m.GetElement(0, 2) / sz],
+                        [m.GetElement(1, 0) / sx, m.GetElement(1, 1) / sy, m.GetElement(1, 2) / sz],
+                        [m.GetElement(2, 0) / sx, m.GetElement(2, 1) / sy, m.GetElement(2, 2) / sz],
+                    ]
+                    # Convert RAS -> LPS for SimpleITK
+                    dir_lps = [
+                        [-dir_ras[0][0], -dir_ras[0][1], -dir_ras[0][2]],
+                        [-dir_ras[1][0], -dir_ras[1][1], -dir_ras[1][2]],
+                        [dir_ras[2][0], dir_ras[2][1], dir_ras[2][2]],
+                    ]
+                    job["_gamma_direction_lps"] = tuple([v for row in dir_lps for v in row])
+                    origin_ras = (m.GetElement(0, 3), m.GetElement(1, 3), m.GetElement(2, 3))
+                    job["_gamma_origin_lps"] = (-origin_ras[0], -origin_ras[1], origin_ras[2])
+                except Exception:
+                    job["_gamma_direction_lps"] = None
+                    job["_gamma_origin_lps"] = None
 
                 # Gamma duration is hard to predict; advance progress slowly to provide feedback.
                 job["_gamma_prog"] = 25
@@ -817,47 +824,134 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                 _tick_gamma_progress()
 
                 def _gamma_fn():
+                    # Use plastimatch CLI to compute gamma and return a numpy array.
                     try:
-                        sx, sy, sz = (float(v) for v in job["ref_eval_node"].GetSpacing())
+                        distance_mm_threshold = float(job.get("_gamma_params", {}).get("distance_mm_threshold", 2.0))
                     except Exception:
-                        sx, sy, sz = (2.0, 2.0, 2.0)
+                        distance_mm_threshold = 2.0
+                    try:
+                        dose_percent_threshold = float(job.get("_gamma_params", {}).get("dose_percent_threshold", 2.0))
+                    except Exception:
+                        dose_percent_threshold = 2.0
 
-                    params = job.get("_gamma_params") or {}
-                    dose_percent_threshold = float(params.get("dose_percent_threshold", 2.0))
-                    distance_mm_threshold = float(params.get("distance_mm_threshold", 2.0))
-                    lower_percent_dose_cutoff = float(params.get("lower_percent_dose_cutoff", 30.0))
-                    local_gamma = bool(params.get("local_gamma", False))
-                    interp_fraction = int(params.get("interp_fraction", 3))
-                    max_gamma = float(params.get("max_gamma", 2))
+                    plastimatch_bin = shutil.which("plastimatch")
+                    if not plastimatch_bin:
+                        raise RuntimeError("plastimatch not found in PATH; install plastimatch or add to PATH")
 
-                    ref_crop = job["_ref_arr"].astype(np.float32)
-                    out_crop = job["_out_arr"].astype(np.float32)
-                    # Build only the cropped axes to reduce allocations.
+                    # Use a non-hidden path visible to snap-packaged plastimatch (snap may block dot-directories)
+                    base_dir = Path.home() / "SlicerImpactDoseAcc_tmp" / "plastimatch"
+                    try:
+                        base_dir.mkdir(parents=True, exist_ok=True)
+                    except Exception:
+                        pass
+                    td = tempfile.mkdtemp(prefix="impact_gamma_", dir=str(base_dir))
+                    tdpath = Path(td)
+                    ref_path = tdpath / "ref.nii.gz"
+                    out_path = tdpath / "out.nii.gz"
+                    gamma_path = tdpath / "gamma.nii.gz"
 
-                    # Build only the cropped axes to reduce allocations.
-                    zc = np.arange(0, job["_ref_arr"].shape[0], dtype=np.float32) * sz
-                    yc = np.arange(0, job["_ref_arr"].shape[1], dtype=np.float32) * sy
-                    xc = np.arange(0, job["_ref_arr"].shape[2], dtype=np.float32) * sx
-                    axes_crop = (zc, yc, xc)
-                    gamma_fn = pymedphys.gamma
+                    try:
+                        # Write with SimpleITK only (avoid MRML operations from worker thread)
+                        try:
+                            import SimpleITK as sitk
+                        except Exception as exc:
+                            raise RuntimeError(f"SimpleITK is required for plastimatch gamma export: {exc}")
 
-                    kwargs = {
-                        "dose_percent_threshold": dose_percent_threshold,
-                        "distance_mm_threshold": distance_mm_threshold,
-                        "lower_percent_dose_cutoff": lower_percent_dose_cutoff,
-                        "interp_fraction": interp_fraction,
-                        "max_gamma": max_gamma,
-                        "local_gamma": local_gamma,
-                        "skip_once_passed": True,
-                    }
+                        # SimpleITK expects arrays in (z,y,x)
+                        img_ref = sitk.GetImageFromArray(np.asarray(job["_ref_arr"]).astype(np.float32))
+                        img_out = sitk.GetImageFromArray(np.asarray(job["_out_arr"]).astype(np.float32))
 
-                    return gamma_fn(
-                        axes_crop,
-                        ref_crop,
-                        axes_crop,
-                        out_crop,
-                        **kwargs,
-                    )
+                        # Set spacing / origin captured on UI thread (if available)
+                        spacing = job.get("_gamma_spacing")
+                        if spacing:
+                            # SimpleITK spacing is (x,y,z)
+                            img_ref.SetSpacing(spacing)
+                            img_out.SetSpacing(spacing)
+                        origin_lps = job.get("_gamma_origin_lps")
+                        if origin_lps:
+                            img_ref.SetOrigin(origin_lps)
+                            img_out.SetOrigin(origin_lps)
+                        direction_lps = job.get("_gamma_direction_lps")
+                        if direction_lps:
+                            img_ref.SetDirection(direction_lps)
+                            img_out.SetDirection(direction_lps)
+
+                        sitk.WriteImage(img_ref, str(ref_path), False)
+                        sitk.WriteImage(img_out, str(out_path), False)
+                        logger.debug("Wrote temp volumes for plastimatch")
+
+                        try:
+                            if not ref_path.exists() or not out_path.exists():
+                                raise RuntimeError("NIfTI files were not created")
+                            if ref_path.stat().st_size == 0 or out_path.stat().st_size == 0:
+                                raise RuntimeError("NIfTI files are empty")
+                        except Exception as exc:
+                            raise RuntimeError(f"Failed to write NIfTI files for plastimatch: {exc}")
+
+                        # plastimatch expects positional image arguments and separate tolerance options
+                        # dose_percent_threshold is in percent (e.g. 2.0 for 2%), convert to fraction for plastimatch
+                        dose_tol = float(dose_percent_threshold) / 100.0
+                        dta_tol = float(distance_mm_threshold)
+                        analysis_threshold = float(job.get("_gamma_params", {}).get("lower_percent_dose_cutoff", 30.0)) / 100.0
+                        local_gamma = bool(job.get("_gamma_params", {}).get("local_gamma", False))
+                        cmd = [
+                            plastimatch_bin,
+                            "gamma",
+                            "--dose-tolerance",
+                            str(dose_tol),
+                            "--dta-tolerance",
+                            str(dta_tol),
+                            "--analysis-threshold",
+                            str(analysis_threshold),
+                             "--gamma-max",
+                            "1.5",
+                            "--interp-search",
+                            "--output",
+                            str(gamma_path),
+                            str(ref_path),
+                            str(out_path),
+                        ]
+                        if local_gamma:
+                            cmd.insert(2, "--local-gamma")
+
+                        logger.debug("Running plastimatch gamma")
+                        try:
+                            p = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ)
+                            logger.debug("plastimatch stdout: %s", p.stdout)
+                        except subprocess.CalledProcessError as exc:
+                            stdout = getattr(exc, "stdout", None)
+                            stderr = getattr(exc, "stderr", None)
+                            logger.error("plastimatch failed: returncode=%s stdout=%s stderr=%s", getattr(exc, "returncode", None), stdout, stderr)
+                            raise RuntimeError(f"plastimatch gamma failed: returncode={getattr(exc,'returncode',None)} stdout={stdout} stderr={stderr}")
+
+                        # Load resulting gamma map via SimpleITK (avoid MRML access in worker thread)
+                        import SimpleITK as sitk
+
+                        img = sitk.ReadImage(str(gamma_path))
+                        # Write gamma image into metrics folder near reference dose (if available)
+                        try:
+                            out_dir = job.get("_metrics_output_dir")
+                            out_name = job.get("out_name") or "metrics"
+                            if out_dir:
+                                out_gamma = os.path.join(out_dir, f"gamma_{out_name}.nii.gz")
+                                sitk.WriteImage(img, out_gamma, True)
+                                job["_gamma_file_path"] = out_gamma
+                                job["_gamma_node_name"] = f"gamma_{out_name}"
+                        except Exception:
+                            pass
+
+                        arr = sitk.GetArrayFromImage(img)
+                        gamma_arr = np.asarray(arr).astype(np.float32)
+                        return gamma_arr
+                    
+                    finally:
+                        # Cleanup temp files
+                        try:
+                            import shutil as _sh
+
+                            _sh.rmtree(td, ignore_errors=True)
+                        except Exception:
+                            pass
 
                 def _gamma_done(gamma_arr):
                     job2 = self._active_job
@@ -867,6 +961,25 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                         _cancel_finish()
                         return
                     job2["gamma_arr"] = gamma_arr
+                    # Import gamma image into Slicer and place under same child folder as metrics table
+                    try:
+                        gamma_path = job2.get("_gamma_file_path")
+                        if gamma_path:
+                            gamma_node = slicer.util.loadVolume(str(gamma_path))
+                            if isinstance(gamma_node, (list, tuple)):
+                                gamma_node = gamma_node[0] if gamma_node else None
+                            if gamma_node is not None:
+                                try:
+                                    node_name = job2.get("_gamma_node_name")
+                                    if node_name:
+                                        gamma_node.SetName(node_name)
+                                except Exception:
+                                    pass
+                                folder_item_id = job2.get("_metrics_folder_item_id")
+                                if folder_item_id:
+                                    self._ensure_node_in_sh_folder(gamma_node, folder_item_id)
+                    except Exception:
+                        logger.exception("Failed to import gamma image into Slicer")
                     self._set_progress(40, visible=True)
                     _start_per_segment_loop()
 
@@ -908,7 +1021,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     return
 
                 seg_id = seg_ids[i]
-                mask = self._export_segment_mask(job2["seg_node"], seg_id, job2["out_dose_node"])
+                mask = self.export_segment_mask(job2["seg_node"], seg_id, job2["out_dose_node"])
                 count = 0
                 try:
                     count = int(np.count_nonzero(mask)) if mask is not None else 0
@@ -954,14 +1067,26 @@ class MetricsEvaluationWidget(BaseImpactWidget):
                     if job2.get("gamma_arr") is not None:
                         try:
                             g = job2["gamma_arr"]
-                            z0, z1, y0, y1, x0, x1 = job2.get("_gamma_bbox")
-                            m = mask[z0:z1, y0:y1, x0:x1]
-                            valid = m & np.isfinite(g)
+                            # Ensure mask and gamma shapes match; avoid accidental broadcasting
+                            try:
+                                if mask.shape != g.shape:
+                                    logger.debug("mask.shape=%s gamma.shape=%s -- shapes mismatch (will attempt alignment)", getattr(mask, "shape", None), getattr(g, "shape", None))
+                            except Exception:
+                                pass
+                            valid = mask & np.isfinite(g)
+                            passed = int(np.count_nonzero(valid & (g <= 1.0)))
                             denom = int(np.count_nonzero(valid))
+                            logger.debug("Segment %s: valid=%d passed=%d denom=%d", seg_id, int(np.count_nonzero(valid)), passed, denom)
+                            # log max abs diff between ref/out in this segment to help diagnose trivial pass
+                            try:
+                                maxdiff = float(np.nanmax(np.abs(job2["_ref_arr"][mask] - job2["_out_arr"][mask])))
+                                logger.debug("Segment %s max abs diff ref/out = %g", seg_id, maxdiff)
+                            except Exception:
+                                pass
                             if denom > 0:
-                                passed = int(np.count_nonzero(valid & (g <= 1.0)))
                                 gamma_pr = 100.0 * passed / float(denom)
                         except Exception:
+                            logger.exception("Failed computing per-segment gamma pass rate")
                             gamma_pr = np.nan
 
                     job2["per_seg"][seg_id] = {

@@ -270,12 +270,6 @@ class DVHWidget(BaseImpactWidget):
         except Exception:
             pass
 
-    def _set_status(self, text: str) -> None:
-        return super()._set_status(text)
-
-    def _set_progress(self, value, visible: bool = True) -> None:
-        return super()._set_progress(value, visible)
-
     def _set_ui_busy(self, busy: bool) -> None:
         # Use base implementation for generic behavior, then apply widget-specific enables.
         super()._set_ui_busy(busy)
@@ -524,17 +518,6 @@ class DVHWidget(BaseImpactWidget):
                 return s[len(pfx) :]
         return ""
 
-    def _find_uncertainty_in_same_folder(self, dose_node):
-        """Delegate to BaseImpactWidget._find_uncertainty_in_same_folder.
-
-        Kept for backward compatibility; centralised implementation lives in BaseImpactWidget.
-        """
-        try:
-            return super()._find_uncertainty_in_same_folder(dose_node)
-        except Exception:
-            logger.exception("Delegated _find_uncertainty_in_same_folder failed")
-            return None
-
     def _on_dose_selection_changed(self) -> None:
         dose_a = self._selected_dose_node_a()
         dose_b = self._selected_dose_node_b()
@@ -559,66 +542,6 @@ class DVHWidget(BaseImpactWidget):
         # Minimal & robust: use 1 Gy bins.
         # If a Slicer Plot build uses point index on X, this keeps the displayed X values in Gy.
         return 1.0
-
-    def _export_segment_mask(self, segmentation_node, segment_id: str, reference_volume_node):
-        """Export one segment to reference volume geometry and return a boolean mask array."""
-        if slicer.mrmlScene is None or segmentation_node is None or reference_volume_node is None:
-            return None
-
-        try:
-            fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
-            if callable(fn):
-                arr = fn(segmentation_node, segment_id, reference_volume_node)
-                if arr is None:
-                    return None
-                return np.asarray(arr) > 0
-        except Exception:
-            pass
-
-        labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:6]}")
-        try:
-            labelmap.SetHideFromEditors(1)
-            labelmap.SetSelectable(0)
-            labelmap.SetSaveWithScene(0)
-        except Exception:
-            pass
-
-        try:
-            seg_logic = slicer.modules.segmentations.logic()
-            seg_ids = vtk.vtkStringArray()
-            seg_ids.InsertNextValue(str(segment_id))
-            seg_logic.ExportSegmentsToLabelmapNode(segmentation_node, seg_ids, labelmap, reference_volume_node)
-            arr = slicer.util.arrayFromVolume(labelmap)
-            return np.asarray(arr) > 0
-        except Exception:
-            return None
-        finally:
-            try:
-                if labelmap is not None and labelmap.GetScene() == slicer.mrmlScene:
-                    try:
-                        dn = labelmap.GetDisplayNode() if hasattr(labelmap, "GetDisplayNode") else None
-                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(dn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    try:
-                        sn = labelmap.GetStorageNode() if hasattr(labelmap, "GetStorageNode") else None
-                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(sn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    try:
-                        slicer.mrmlScene.RemoveNode(labelmap)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
 
     def _compute_cumulative_dvh(self, dose_vals: np.ndarray, bins_edges_gy: np.ndarray, voxel_volume_cc: float):
         if dose_vals is None or bins_edges_gy is None:
@@ -956,7 +879,7 @@ class DVHWidget(BaseImpactWidget):
                 except Exception:
                     pass
 
-            mask = self._export_segment_mask(j2["seg_node"], seg_id, dose_node)
+            mask = self.export_segment_mask(j2["seg_node"], seg_id, dose_node)
             if mask is None:
                 pass
             else:
@@ -1159,6 +1082,7 @@ class DVHWidget(BaseImpactWidget):
 
                     import matplotlib.pyplot as plt
                 except Exception:
+                    logger.exception("Matplotlib is not available; skipping PNG export")
                     return None
 
                 xs = np.asarray(centers2, dtype=np.float32)
@@ -1265,13 +1189,31 @@ class DVHWidget(BaseImpactWidget):
                 except Exception:
                     pass
 
+                def _safe_png_name(name: str) -> str:
+                    try:
+                        s = str(name or "")
+                    except Exception:
+                        s = ""
+                    if not s:
+                        s = "dvh"
+                    try:
+                        import re
+
+                        s = re.sub(r"[<>:\"/\\|?*]", "_", s)
+                    except Exception:
+                        s = s.replace(":", "_").replace("/", "_").replace("\\", "_")
+                    s = s.strip("._ ")
+                    return s or "dvh"
+
                 buf = io.BytesIO()
                 try:
                     fig.savefig(buf, format="png", dpi=110)
                 except Exception:
+                    logger.exception("Failed to render matplotlib figure")
                     return None
                 try:
-                    out_path = os.path.join(tempfile.gettempdir(), f"{table_name}.png")
+                    out_name = f"{_safe_png_name(table_name)}.png"
+                    out_path = os.path.join(tempfile.gettempdir(), out_name)
                     with open(out_path, "wb") as f:
                         f.write(buf.getvalue())
                     return out_path
