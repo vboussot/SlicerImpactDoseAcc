@@ -137,11 +137,7 @@ class BaseImpactWidget(QWidget):
     def _safe_node_name(self, node: Any) -> str:
         if node is None or not hasattr(node, "GetName"):
             return ""
-        try:
-            return node.GetName() or ""
-        except Exception:
-            logger.exception("_safe_node_name failed")
-            return ""
+        return node.GetName() or ""
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text or "")
@@ -225,28 +221,17 @@ class BaseImpactWidget(QWidget):
         sh_node = self._get_sh_node()
         if sh_node is None:
             return None
-        try:
-            dose_item = int(sh_node.GetItemByDataNode(dose_node) or 0)
-        except Exception:
-            dose_item = 0
+        dose_item = int(sh_node.GetItemByDataNode(dose_node) or 0)
         if not dose_item:
             return None
-        try:
-            parent = int(sh_node.GetItemParent(dose_item) or 0)
-        except Exception:
-            parent = 0
+        parent = int(sh_node.GetItemParent(dose_item) or 0)
         if not parent:
             return None
 
         # base name candidates
         name = self._safe_node_name(dose_node)
-        base = None
-        try:
-            # simple heuristic similar to other widgets
-            base = name.split("dose_")[-1] if "dose_" in name else name
-            base = base.strip()
-        except Exception:
-            base = None
+        base = name.split("dose_")[-1] if "dose_" in name else name
+        base = base.strip()
 
         preferred = []
         if base:
@@ -260,10 +245,7 @@ class BaseImpactWidget(QWidget):
 
         first_unc = None
         for i in range(ids.GetNumberOfIds()):
-            try:
-                child = int(ids.GetId(i))
-            except Exception:
-                continue
+            child = int(ids.GetId(i))
             try:
                 n = sh_node.GetItemDataNode(child)
             except Exception:

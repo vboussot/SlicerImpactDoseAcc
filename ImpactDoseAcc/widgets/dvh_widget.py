@@ -32,8 +32,6 @@ class DVHWidget(BaseImpactWidget):
         self._segment_checkbox_by_id = {}
         self._active_job = None
         self._plot_view_node = None
-        self._last_png_path = None
-        self._last_out_base = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -62,14 +60,11 @@ class DVHWidget(BaseImpactWidget):
 
         # Configure segmentation selector
         if self.seg_selector is not None:
-            try:
-                self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
-                self.seg_selector.noneEnabled = True
-                self.seg_selector.addEnabled = False
-                self.seg_selector.removeEnabled = False
-                self.seg_selector.setMRMLScene(slicer.mrmlScene)
-            except Exception:
-                pass
+            self.seg_selector.nodeTypes = ["vtkMRMLSegmentationNode"]
+            self.seg_selector.noneEnabled = True
+            self.seg_selector.addEnabled = False
+            self.seg_selector.removeEnabled = False
+            self.seg_selector.setMRMLScene(slicer.mrmlScene)
 
         # Buttons & signals
         self._btn("refresh_btn", self._refresh_dose_lists)
@@ -124,32 +119,19 @@ class DVHWidget(BaseImpactWidget):
         if self.plot_widget is None or chart_node is None:
             return
 
-        try:
-            self._ensure_embedded_plot_view()
-        except Exception:
-            # Best-effort; if embedding fails we keep going with widget-level APIs.
-            pass
+        self._ensure_embedded_plot_view()
 
-        try:
-            if (
-                self._plot_view_node is not None
-                and hasattr(self._plot_view_node, "SetPlotChartNodeID")
-                and hasattr(chart_node, "GetID")
-            ):
-                try:
-                    self._plot_view_node.SetPlotChartNodeID(chart_node.GetID())
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        if (
+            self._plot_view_node is not None
+            and hasattr(self._plot_view_node, "SetPlotChartNodeID")
+            and hasattr(chart_node, "GetID")
+        ):
+            self._plot_view_node.SetPlotChartNodeID(chart_node.GetID())
 
-        try:
-            if hasattr(self.plot_widget, "setMRMLPlotChartNode"):
-                self.plot_widget.setMRMLPlotChartNode(chart_node)
-            elif hasattr(self.plot_widget, "setMRMLPlotChartNodeID") and hasattr(chart_node, "GetID"):
-                self.plot_widget.setMRMLPlotChartNodeID(chart_node.GetID())
-        except Exception:
-            pass
+        if hasattr(self.plot_widget, "setMRMLPlotChartNode"):
+            self.plot_widget.setMRMLPlotChartNode(chart_node)
+        elif hasattr(self.plot_widget, "setMRMLPlotChartNodeID") and hasattr(chart_node, "GetID"):
+            self.plot_widget.setMRMLPlotChartNodeID(chart_node.GetID())
 
     def _ensure_embedded_plot_view(self) -> None:
         if self.plot_widget is None or slicer.mrmlScene is None:
@@ -157,66 +139,47 @@ class DVHWidget(BaseImpactWidget):
 
         # Create (or reuse) a plot view node in the scene
         if self._plot_view_node is None:
-            try:
-                self._plot_view_node = slicer.mrmlScene.AddNewNodeByClass(
-                    "vtkMRMLPlotViewNode", f"DVHPlotView_{uuid4().hex[:6]}"
-                )
-            except Exception:
-                self._plot_view_node = None
+            self._plot_view_node = slicer.mrmlScene.AddNewNodeByClass(
+                "vtkMRMLPlotViewNode", f"DVHPlotView_{uuid4().hex[:6]}"
+            )
 
         # Attach view node to widget
         if self._plot_view_node is not None:
-            try:
-                if hasattr(self.plot_widget, "setMRMLPlotViewNode"):
-                    self.plot_widget.setMRMLPlotViewNode(self._plot_view_node)
-                elif hasattr(self.plot_widget, "setMRMLPlotViewNodeID") and hasattr(self._plot_view_node, "GetID"):
-                    self.plot_widget.setMRMLPlotViewNodeID(self._plot_view_node.GetID())
-            except Exception:
-                pass
+            if hasattr(self.plot_widget, "setMRMLPlotViewNode"):
+                self.plot_widget.setMRMLPlotViewNode(self._plot_view_node)
+            elif hasattr(self.plot_widget, "setMRMLPlotViewNodeID") and hasattr(self._plot_view_node, "GetID"):
+                self.plot_widget.setMRMLPlotViewNodeID(self._plot_view_node.GetID())
 
     def _set_chart_legend_visible(self, chart_node, visible: bool) -> None:
         if chart_node is None:
             return
         v = bool(visible)
-        # Try common APIs; ignore if not available.
         for meth in (
             "SetLegendVisibility",
             "SetShowLegend",
             "SetLegendVisible",
             "SetShowLegendVisibility",
         ):
-            try:
-                if hasattr(chart_node, meth):
-                    getattr(chart_node, meth)(1 if v else 0)
-                    return
-            except Exception:
-                continue
+            if hasattr(chart_node, meth):
+                getattr(chart_node, meth)(1 if v else 0)
+                return
 
     def _apply_series_opacity(self, series, alpha: float) -> None:
         if series is None:
             return
-        try:
-            a = float(alpha)
-        except Exception:
-            a = 1.0
+        a = float(alpha)
         a = max(0.0, min(1.0, a))
         for meth in ("SetOpacity", "SetLineOpacity", "SetFillOpacity", "SetBrushOpacity"):
-            try:
-                if hasattr(series, meth):
-                    getattr(series, meth)(a)
-                    return
-            except Exception:
-                continue
+            if hasattr(series, meth):
+                getattr(series, meth)(a)
+                return
 
     def _rgb01_to_hex(self, rgb):
-        try:
-            r, g, b = rgb
-            r = int(max(0, min(255, round(float(r) * 255.0))))
-            g = int(max(0, min(255, round(float(g) * 255.0))))
-            b = int(max(0, min(255, round(float(b) * 255.0))))
-            return f"#{r:02x}{g:02x}{b:02x}"
-        except Exception:
-            return "#000000"
+        r, g, b = rgb
+        r = int(max(0, min(255, round(float(r) * 255.0))))
+        g = int(max(0, min(255, round(float(g) * 255.0))))
+        b = int(max(0, min(255, round(float(b) * 255.0))))
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     def _update_legend(self, structure_items):
         """Update custom legend.
@@ -262,22 +225,13 @@ class DVHWidget(BaseImpactWidget):
             self.cb_unc_a.setEnabled(False)
             self.cb_unc_b.setEnabled(False)
         else:
-            try:
-                self._on_dose_selection_changed()
-            except Exception:
-                logger.exception("_on_dose_selection_changed raised when restoring UI busy state")
+            self._on_dose_selection_changed()
 
     def _selected_dose_node_a(self):
-        try:
-            return self._dose_node_by_index_a.get(self._combo_current_index(self.dose_combo_a), None)
-        except Exception:
-            return None
+        return self._dose_node_by_index_a.get(self._combo_current_index(self.dose_combo_a), None)
 
     def _selected_dose_node_b(self):
-        try:
-            return self._dose_node_by_index_b.get(self._combo_current_index(self.dose_combo_b), None)
-        except Exception:
-            return None
+        return self._dose_node_by_index_b.get(self._combo_current_index(self.dose_combo_b), None)
 
     def _refresh_dose_lists(self) -> None:
         if slicer.mrmlScene is None:
@@ -301,68 +255,54 @@ class DVHWidget(BaseImpactWidget):
         self.dose_combo_b.addItem("[None]")
 
         # Filter volumes by name containing 'dose'.
-        try:
-            volumes = list(slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"))
-        except Exception:
-            volumes = []
-
-        dose_nodes = [
-            n
-            for n in volumes
-            if n is not None
-            and ("dose" in self._safe_node_name(n).lower())
-            and ("uncertainty" not in self._safe_node_name(n).lower())
-        ]
-        dose_nodes.sort(key=lambda n: self._safe_node_name(n).lower())
+        volumes = list(slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"))
+        dose_nodes = []
+        for n in volumes:
+            if n is None:
+                continue
+            name = self._safe_node_name(n)
+            name_l = name.lower()
+            if "dose" not in name_l:
+                continue
+            if "uncertainty" in name_l:
+                continue
+            dose_nodes.append((name_l, name, n))
+        dose_nodes.sort(key=lambda t: t[0])
 
         match_a = 0
         match_b = 0
         idx = 1
-        for n in dose_nodes:
-            name = self._safe_node_name(n)
+        for _, name, n in dose_nodes:
             self.dose_combo_a.addItem(name)
             self._dose_node_by_index_a[idx] = n
             if prev_a_id and hasattr(n, "GetID") and n.GetID() == prev_a_id:
                 match_a = idx
-            idx += 1
 
-        idx = 1
-        for n in dose_nodes:
-            name = self._safe_node_name(n)
             self.dose_combo_b.addItem(name)
             self._dose_node_by_index_b[idx] = n
             if prev_b_id and hasattr(n, "GetID") and n.GetID() == prev_b_id:
                 match_b = idx
+
             idx += 1
 
-        try:
-            if match_a:
-                self.dose_combo_a.setCurrentIndex(match_a)
-        except Exception:
-            pass
-        try:
-            if match_b:
-                self.dose_combo_b.setCurrentIndex(match_b)
-        except Exception:
-            pass
+        if match_a:
+            self.dose_combo_a.setCurrentIndex(match_a)
 
-        try:
-            self.dose_combo_a.blockSignals(False)
-            self.dose_combo_b.blockSignals(False)
-        except Exception:
-            pass
+        if match_b:
+            self.dose_combo_b.setCurrentIndex(match_b)
+
+        self.dose_combo_a.blockSignals(False)
+        self.dose_combo_b.blockSignals(False)
 
     def _clear_layout(self, layout) -> None:
         if layout is None:
             return
-        try:
-            while layout.count():
-                item = layout.takeAt(0)
-                w = item.widget() if item is not None else None
-                if w is not None:
-                    w.setParent(None)
-        except Exception:
-            pass
+
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                w.setParent(None)
 
     def _on_segmentation_changed(self, seg_node) -> None:
         self._segment_checkbox_by_id = {}
@@ -372,28 +312,18 @@ class DVHWidget(BaseImpactWidget):
             self._segments_group.setEnabled(False)
             return
 
-        try:
-            seg = seg_node.GetSegmentation()
-        except Exception:
-            seg = None
+        seg = seg_node.GetSegmentation()
         if seg is None:
             self._segments_group.setEnabled(False)
             return
 
         self._segments_group.setEnabled(True)
-
-        try:
-            n = int(seg.GetNumberOfSegments())
-        except Exception:
-            n = 0
-
+        n = int(seg.GetNumberOfSegments())
         for i in range(n):
-            try:
-                seg_id = seg.GetNthSegmentID(i)
-                seg_obj = seg.GetSegment(seg_id)
-                seg_name = seg_obj.GetName() if seg_obj is not None else seg_id
-            except Exception:
-                continue
+            seg_id = seg.GetNthSegmentID(i)
+            seg_obj = seg.GetSegment(seg_id)
+            seg_name = seg_obj.GetName() if seg_obj is not None else seg_id
+
             cb = QCheckBox(str(seg_name))
             cb.setChecked(True)
             self._segment_checkbox_by_id[str(seg_id)] = cb
@@ -402,76 +332,44 @@ class DVHWidget(BaseImpactWidget):
         self._segments_scroll_layout.addStretch()
 
     def _selected_segment_ids(self):
-        try:
-            return [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
-        except Exception:
-            return []
+        return [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
 
     # show_png removed per user request
 
     def _load_png_node(self, path: str, name: str):
         if slicer.mrmlScene is None or not path or not os.path.exists(path):
             return None
-        try:
-            existing = slicer.mrmlScene.GetFirstNodeByName(name)
-        except Exception:
-            existing = None
+        existing = slicer.mrmlScene.GetFirstNodeByName(name)
 
         if existing is not None and hasattr(existing, "IsA") and existing.IsA("vtkMRMLScalarVolumeNode"):
-            try:
-                storage = existing.GetStorageNode()
-            except Exception:
-                storage = None
+            storage = existing.GetStorageNode()
             if storage is not None:
+                storage.SetFileName(path)
+                storage.ReadData(existing)
+                return existing
+
+            # Fallback: remove display/storage nodes then node to avoid VTK pipeline warnings
+            if existing.GetScene() == slicer.mrmlScene:
+                dn = existing.GetDisplayNode() if hasattr(existing, "GetDisplayNode") else None
+                if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                    try:
+                        slicer.mrmlScene.RemoveNode(dn)
+                    except Exception:
+                        pass
+
+                sn = existing.GetStorageNode() if hasattr(existing, "GetStorageNode") else None
+                if sn is not None and sn.GetScene() == slicer.mrmlScene:
+                    try:
+                        slicer.mrmlScene.RemoveNode(sn)
+                    except Exception:
+                        pass
                 try:
-                    storage.SetFileName(path)
-                    storage.ReadData(existing)
-                    return existing
+                    slicer.mrmlScene.RemoveNode(existing)
                 except Exception:
                     pass
-            # Fallback: remove display/storage nodes then node to avoid VTK pipeline warnings
-            try:
-                if existing.GetScene() == slicer.mrmlScene:
-                    try:
-                        dn = existing.GetDisplayNode() if hasattr(existing, "GetDisplayNode") else None
-                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(dn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    try:
-                        sn = existing.GetStorageNode() if hasattr(existing, "GetStorageNode") else None
-                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(sn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    try:
-                        slicer.mrmlScene.RemoveNode(existing)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
 
-        try:
-            n = slicer.util.loadVolume(path, properties={"name": name})
-            return n
-        except Exception:
-            return None
-
-    def _dose_base_name(self, dose_name: str) -> str:
-        try:
-            s = str(dose_name or "")
-        except Exception:
-            return ""
-        for pfx in ("dose_acc_", "dose_list_", "dose_"):
-            if s.startswith(pfx):
-                return s[len(pfx) :]
-        return ""
+        n = slicer.util.loadVolume(path, properties={"name": name})
+        return n
 
     def _on_dose_selection_changed(self) -> None:
         dose_a = self._selected_dose_node_a()
@@ -496,11 +394,8 @@ class DVHWidget(BaseImpactWidget):
     def _compute_cumulative_dvh(self, dose_vals: np.ndarray, bins_edges_gy: np.ndarray, voxel_volume_cc: float):
         if dose_vals is None or bins_edges_gy is None:
             return None, None
-        try:
-            vals = np.asarray(dose_vals, dtype=np.float32)
-            vals = vals[np.isfinite(vals)]
-        except Exception:
-            return None, None
+        vals = np.asarray(dose_vals, dtype=np.float32)
+        vals = vals[np.isfinite(vals)]
         if vals.size == 0:
             return None, None
 
@@ -512,12 +407,595 @@ class DVHWidget(BaseImpactWidget):
         vpct = np.asarray(100.0 * cum / float(cum[0]), dtype=np.float32)
         return vpct, vcc
 
-    def _on_compute_dvh(self) -> None:
-        if self._active_job is not None:
+    def _dvh_cleanup_temp_nodes(self) -> None:
+        j = self._active_job
+        if j is None:
+            return
+        for tn in j.get("temp_nodes", []):
+            if tn is None or slicer.mrmlScene is None:
+                continue
             try:
-                QMessageBox.information(self, "Busy", "A DVH computation is already running.")
+                in_scene = tn.GetScene() == slicer.mrmlScene
+            except Exception:
+                in_scene = False
+            if not in_scene:
+                continue
+
+            dn = tn.GetDisplayNode() if hasattr(tn, "GetDisplayNode") else None
+            if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                slicer.mrmlScene.RemoveNode(dn)
+            sn = tn.GetStorageNode() if hasattr(tn, "GetStorageNode") else None
+            if sn is not None and sn.GetScene() == slicer.mrmlScene:
+                slicer.mrmlScene.RemoveNode(sn)
+
+            try:
+                slicer.mrmlScene.RemoveNode(tn)
             except Exception:
                 pass
+
+    def _dvh_finish(self, ok: bool, msg: str = "") -> None:
+        self._dvh_cleanup_temp_nodes()
+        self._active_job = None
+        self._set_ui_busy(False)
+        self._set_progress(0, visible=False)
+        if msg:
+            QMessageBox.information(self, "DVH", str(msg)) if ok else QMessageBox.warning(self, "DVH", str(msg))
+
+    def _dvh_fail(self, msg: str) -> None:
+        self._dvh_finish(False, msg)
+
+    def _dvh_dose_grid_scaling_from_node(self, n) -> float:
+        if n is None or not hasattr(n, "GetAttribute"):
+            return 1.0
+        keys = (
+            "DoseGridScaling",
+            "DICOM.DoseGridScaling",
+            "DICOM.RTDOSE.DoseGridScaling",
+            "RTDOSE.DoseGridScaling",
+            "DicomRtDoseGridScaling",
+        )
+        for k in keys:
+            try:
+                v = n.GetAttribute(k)
+            except Exception:
+                v = None
+            if not v:
+                continue
+            f = float(v)
+            if np.isfinite(f) and f > 0:
+                return float(f)
+        return 1.0
+
+    def _dvh_schedule_tick(self) -> None:
+        try:
+            QTimer.singleShot(0, self._dvh_tick)
+        except Exception:
+            self._dvh_tick()
+
+    def _dvh_tick(self) -> None:
+        j2 = self._active_job
+        if j2 is None:
+            return
+
+        dlabels = j2.get("_dose_labels", [])
+        if not dlabels:
+            self._dvh_fail("No dose selected.")
+            return
+        di = int(j2.get("_dose_idx", 0))
+        si = int(j2.get("_seg_idx", 0))
+        seg_ids2 = j2.get("seg_ids", [])
+        total = max(1, len(dlabels) * len(seg_ids2))
+
+        if di >= len(dlabels):
+            self._dvh_build_outputs()
+            return
+        if si >= len(seg_ids2):
+            j2["_dose_idx"] = di + 1
+            j2["_seg_idx"] = 0
+            self._dvh_schedule_tick()
+            return
+
+        label = str(dlabels[di])
+        seg_id = str(seg_ids2[si])
+        j2["_seg_idx"] = si + 1
+
+        dose_nodes = j2.get("dose_nodes", []) or []
+        dose_a = dose_nodes[0] if len(dose_nodes) > 0 else None
+        dose_b = dose_nodes[1] if len(dose_nodes) > 1 else None
+
+        dose_node = dose_a if label == "A" else dose_b
+        dose_arr = j2.get("_dose_arr_by_label", {}).get(label, None)
+        if dose_node is None or dose_arr is None:
+            self._dvh_schedule_tick()
+            return
+
+        # Segment name + color
+        seg_name = seg_id
+        seg_color = None
+        try:
+            seg = j2["seg_node"].GetSegmentation()
+            seg_obj = seg.GetSegment(seg_id) if seg is not None else None
+            seg_name = seg_obj.GetName() if seg_obj is not None else seg_id
+            if seg_obj is not None and hasattr(seg_obj, "GetColor"):
+                c = seg_obj.GetColor()
+                seg_color = (float(c[0]), float(c[1]), float(c[2]))
+        except Exception:
+            seg_name = seg_id
+
+        mask = self.export_segment_mask(j2["seg_node"], seg_id, dose_node)
+        if mask is not None:
+            if int(np.count_nonzero(mask)) > 0:
+                bins_edges = j2.get("_bins_edges")
+                vox_cc = float(j2.get("_vox_cc_by_label", {}).get(label, 1.0))
+                scale = float(j2.get("_dose_scale_by_label", {}).get(label, 1.0))
+                vals = dose_arr[mask] * scale
+                vpct, vcc = self._compute_cumulative_dvh(vals, bins_edges, vox_cc)
+                dose_role = "Ref" if label == "A" else "Estimated"
+                if vpct is not None:
+                    j2["curves"].append(
+                        {
+                            "label": f"{dose_role} | {seg_name}",
+                            "dose_label": label,
+                            "seg_id": seg_id,
+                            "seg_name": seg_name,
+                            "kind": "mean",
+                            "color": seg_color,
+                            "vpct": vpct,
+                            "vcc": vcc,
+                        }
+                    )
+
+                # Optional uncertainty traces as DVH(dose±3σ)
+                uarr = j2.get("_unc_arr_by_label", {}).get(label, None)
+                if uarr is not None:
+                    uvals = 3.0 * uarr[mask] * scale
+                    plus = vals + uvals
+                    minus = np.maximum(vals - uvals, 0.0)
+                    vpct_p, vcc_p = self._compute_cumulative_dvh(plus, bins_edges, vox_cc)
+                    vpct_m, vcc_m = self._compute_cumulative_dvh(minus, bins_edges, vox_cc)
+                    if vpct_p is not None:
+                        j2["curves"].append(
+                            {
+                                "label": f"{dose_role} | {seg_name} | max (+3σ)",
+                                "dose_label": label,
+                                "seg_id": seg_id,
+                                "seg_name": seg_name,
+                                "kind": "+3sigma",
+                                "color": seg_color,
+                                "vpct": vpct_p,
+                                "vcc": vcc_p,
+                            }
+                        )
+                    if vpct_m is not None:
+                        j2["curves"].append(
+                            {
+                                "label": f"{dose_role} | {seg_name} | min (-3σ)",
+                                "dose_label": label,
+                                "seg_id": seg_id,
+                                "seg_name": seg_name,
+                                "kind": "-3sigma",
+                                "color": seg_color,
+                                "vpct": vpct_m,
+                                "vcc": vcc_m,
+                            }
+                        )
+
+        done = min(total, (di * len(seg_ids2)) + (si + 1))
+        p = 5 + int(80 * float(done) / float(total))
+        self._set_progress(min(90, p), visible=True)
+        self._set_status(f"Computing DVH… ({done}/{total})")
+
+        self._dvh_schedule_tick()
+
+    def _dvh_create_or_get_table_node(self, name: str):
+        if slicer.mrmlScene is None:
+            return None
+        node = slicer.mrmlScene.GetFirstNodeByName(name)
+        if node is not None and hasattr(node, "IsA") and node.IsA("vtkMRMLTableNode"):
+            return node
+        return slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
+
+    def _dvh_safe_col_base(self, s: str) -> str:
+        txt = str(s)
+        txt = txt.replace("σ", "sigma").replace("±", "+/-")
+        try:
+            import re
+
+            txt = re.sub(r"[^0-9A-Za-z _|:+().-]", "_", txt)
+        except Exception:
+            pass
+        return txt
+
+    def _dvh_safe_png_name(self, name: str) -> str:
+        s = str(name or "")
+        if not s:
+            s = "dvh"
+        try:
+            import re
+
+            s = re.sub(r"[<>:\"/\\|?*]", "_", s)
+        except Exception:
+            s = s.replace(":", "_").replace("/", "_").replace("\\", "_")
+        s = s.strip("._ ")
+        return s or "dvh"
+
+    def _dvh_render_matplotlib_png(self, table_name: str, centers2: np.ndarray, curves_cached):
+        try:
+            import matplotlib
+        except Exception:
+            logger.exception("Matplotlib is not downloaded; download it to enable DVH plotting")
+            slicer.util.pip_install("matplotlib")
+            import matplotlib
+
+        matplotlib.use("Agg")
+        matplotlib.set_loglevel("warning")
+        import tempfile
+
+        import matplotlib.pyplot as plt
+
+        xs = np.asarray(centers2, dtype=np.float32)
+        if xs.size == 0:
+            return None
+
+        try:
+            plt.style.use("seaborn-v0_8-colorblind")
+        except Exception:
+            pass
+
+        fig, ax = plt.subplots(figsize=(6.4, 4.0), dpi=110)
+        ax.set_facecolor("#f6f7fb")
+        ax.set_xlabel("Dose (Gy)")
+        ax.set_ylabel("Volume (%)")
+        ax.grid(True, alpha=0.25, color="#cfd3dc", linewidth=0.8)
+
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for c in curves_cached:
+            key = (c.get("_dose_label", ""), c.get("_seg_id", ""))
+            grouped.setdefault(key, {})[c.get("_kind", "mean") or "mean"] = c
+
+        structure_handles = []
+        structure_labels = []
+        added_struct_labels = set()
+        unc_patch_handle = None
+
+        for (_dl, _sid), ck in grouped.items():
+            dose_label = _dl or ""
+            mean_c = ck.get("mean")
+            if mean_c is None:
+                continue
+            y_mean = np.asarray(mean_c.get("vpct"), dtype=np.float32)
+            if y_mean.size != xs.size:
+                continue
+            rgb = mean_c.get("_color", None) or (0.0, 0.0, 0.0)
+            struct_label = mean_c.get("_seg_name", "")
+
+            upper_c = ck.get("+3sigma")
+            lower_c = ck.get("-3sigma")
+            if upper_c is not None and lower_c is not None:
+                y_up = np.asarray(upper_c.get("vpct"), dtype=np.float32)
+                y_lo = np.asarray(lower_c.get("vpct"), dtype=np.float32)
+                if y_up.size == xs.size and y_lo.size == xs.size:
+                    ax.fill_between(xs, y_lo, y_up, color=rgb, alpha=0.20, linewidth=0)
+                    if unc_patch_handle is None:
+                        from matplotlib.patches import Patch
+
+                        unc_patch_handle = Patch(
+                            facecolor="#9ca3af", edgecolor="#4b5563", alpha=0.35, label="Uncertainty (±3σ)"
+                        )
+
+            line_style = "--" if dose_label == "B" else "-"
+            ax.plot(xs, y_mean, color=rgb, lw=1.8, alpha=1.0, linestyle=line_style, label=struct_label)
+            line_handle = ax.lines[-1]
+            if struct_label and struct_label not in added_struct_labels:
+                added_struct_labels.add(struct_label)
+                structure_handles.append(line_handle)
+                structure_labels.append(struct_label)
+
+        legend_handles = []
+        legend_labels = []
+
+        legend_handles.extend(structure_handles)
+        legend_labels.extend(structure_labels)
+
+        from matplotlib.lines import Line2D
+
+        legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="-", label="Dose ref"))
+        legend_labels.append("Dose ref")
+        legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="--", label="Dose estimated"))
+        legend_labels.append("Dose estimated")
+
+        if unc_patch_handle is not None:
+            legend_handles.append(unc_patch_handle)
+            legend_labels.append("Uncertainty (±3σ)")
+
+        ax.legend(legend_handles, legend_labels, loc="best", fontsize=8, frameon=True, fancybox=True)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        try:
+            fig.savefig(buf, format="png", dpi=110)
+        except Exception:
+            logger.exception("Failed to render matplotlib figure")
+            return None
+        try:
+            out_name = f"{self._dvh_safe_png_name(table_name)}.png"
+            out_path = os.path.join(tempfile.gettempdir(), out_name)
+            with open(out_path, "wb") as f:
+                f.write(buf.getvalue())
+            return out_path
+        except Exception:
+            return None
+        finally:
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
+
+    def _dvh_add_line_series(
+        self,
+        table_node,
+        chart_node,
+        table_name: str,
+        x_col_name: str,
+        series_index: int,
+        y_col: str,
+        rgb,
+        name_suffix: str,
+        width: int,
+        dashed: bool,
+        opacity=None,
+        created_series_nodes=None,
+    ) -> int:
+        sname = f"{table_name}_{series_index:02d}_{name_suffix}"
+        series_index += 1
+        s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", sname)
+        if s is None:
+            return series_index
+        try:
+            s.SetAndObserveTableNodeID(table_node.GetID())
+            if hasattr(s, "SetXColumnName"):
+                s.SetXColumnName(x_col_name)
+            if hasattr(s, "SetYColumnName"):
+                s.SetYColumnName(y_col)
+            s.SetPlotType(s.PlotTypeLine)
+            s.SetMarkerStyle(s.MarkerStyleNone)
+        except Exception:
+            pass
+        if dashed:
+            s.SetLineStyle(s.LineStyleDash)
+        else:
+            s.SetLineStyle(s.LineStyleSolid)
+        if hasattr(s, "SetLineWidth"):
+            s.SetLineWidth(int(width))
+        if rgb is not None and hasattr(s, "SetColor"):
+            s.SetColor(float(rgb[0]), float(rgb[1]), float(rgb[2]))
+
+        if opacity is not None:
+            self._apply_series_opacity(s, float(opacity))
+        s.Modified()
+        chart_node.AddAndObservePlotSeriesNodeID(s.GetID())
+        if created_series_nodes is not None:
+            created_series_nodes.append(s)
+        return series_index
+
+    def _dvh_find_child_folder(self, sh_node, parent, name: str) -> int:
+        try:
+            ids = vtk.vtkIdList()
+            sh_node.GetItemChildren(parent, ids)
+            for ii in range(ids.GetNumberOfIds()):
+                child = ids.GetId(ii)
+                if sh_node.GetItemName(child) == name:
+                    return int(child)
+        except Exception:
+            pass
+        return 0
+
+    def _dvh_reparent_node(self, sh_node, node, parent_folder_item) -> None:
+        if node is None or not parent_folder_item:
+            return
+        item = int(sh_node.GetItemByDataNode(node) or 0)
+        if not item:
+            return
+        sh_node.SetItemParent(item, int(parent_folder_item))
+
+    def _dvh_reparent_outputs(
+        self, table_node, chart_node, created_series_nodes, table_name: str, png_path: str | None
+    ):
+        sh_node = self._get_sh_node()
+        if sh_node is None:
+            return
+        parent_item = 0
+        dose_nodes = (self._active_job or {}).get("dose_nodes", []) or []
+        dose_a = dose_nodes[0] if len(dose_nodes) > 0 else None
+
+        if dose_a is not None:
+            dose_item = int(sh_node.GetItemByDataNode(dose_a) or 0)
+            if dose_item:
+                parent_item = int(sh_node.GetItemParent(dose_item) or 0)
+
+        if not parent_item:
+            parent_item = int(sh_node.GetSceneItemID() or 0)
+
+        dvh_root = self._dvh_find_child_folder(sh_node, parent_item, "DVH")
+        if not dvh_root:
+            dvh_root = int(sh_node.CreateFolderItem(parent_item, "DVH") or 0)
+
+        run_folder_name = str(table_name)
+        run_folder = self._dvh_find_child_folder(sh_node, dvh_root, run_folder_name) if dvh_root else 0
+        if dvh_root and not run_folder:
+            run_folder = int(sh_node.CreateFolderItem(dvh_root, run_folder_name) or 0)
+
+        target_folder = run_folder or dvh_root
+        self._dvh_reparent_node(sh_node, table_node, target_folder)
+        self._dvh_reparent_node(sh_node, chart_node, target_folder)
+        for s in created_series_nodes or []:
+            self._dvh_reparent_node(sh_node, s, target_folder)
+
+        if png_path:
+            png_node = self._load_png_node(png_path, f"{table_name}_png")
+            self._dvh_reparent_node(sh_node, png_node, target_folder)
+
+    def _dvh_build_outputs(self) -> None:
+        j2 = self._active_job
+        if j2 is None:
+            return
+        self._set_status("Building table/plot…")
+        self._set_progress(92, visible=True)
+
+        table_name = str(j2.get("out_base"))
+        table_node = self._dvh_create_or_get_table_node(table_name)
+        if table_node is None:
+            self._dvh_fail("Could not create output TableNode.")
+            return
+
+        table = table_node.GetTable()
+        table.Initialize()
+
+        centers2 = np.asarray(j2.get("_bins_centers"), dtype=np.float32)
+        nrows = int(centers2.size)
+
+        xcol = vtk.vtkFloatArray()
+        xcol.SetName("dose_gy")
+        xcol.SetNumberOfTuples(nrows)
+        table.AddColumn(xcol)
+
+        table.SetNumberOfRows(nrows)
+        for r in range(nrows):
+            xcol.SetValue(r, float(centers2[r]))
+
+        if hasattr(table, "SetColumnName"):
+            table.SetColumnName(0, "dose_gy")
+
+        c0 = table.GetColumn(0)
+        if c0 is not None and hasattr(c0, "SetName"):
+            c0.SetName("dose_gy")
+
+        curves = list(j2.get("curves", []))
+        curves_cached = []
+        for c in curves:
+            d = dict(c)
+            d["_label"] = str(d.get("label", "curve"))
+            d["_seg_name"] = str(d.get("seg_name", "") or "")
+            d["_dose_label"] = str(d.get("dose_label", "") or "")
+            d["_kind"] = str(d.get("kind", "") or "")
+            d["_seg_id"] = str(d.get("seg_id", "") or "")
+            d["_color"] = d.get("color", None)
+            curves_cached.append(d)
+        col_specs = []
+
+        for c in curves_cached:
+            col_base = self._dvh_safe_col_base(c.get("_label", "curve"))
+            col_vpct = f"{col_base} | V%"
+            col_vcc = f"{col_base} | Vcc"
+            vp = vtk.vtkFloatArray()
+            vp.SetName(col_vpct)
+            vp.SetNumberOfTuples(nrows)
+            vc = vtk.vtkFloatArray()
+            vc.SetName(col_vcc)
+            vc.SetNumberOfTuples(nrows)
+            table.AddColumn(vp)
+            table.AddColumn(vc)
+            col_specs.append((col_vpct, col_vcc, c))
+
+        for ci, (_, _, c) in enumerate(col_specs):
+            vpct = np.asarray(c.get("vpct"), dtype=np.float32)
+            vcc = np.asarray(c.get("vcc"), dtype=np.float32)
+            if vpct.size != nrows:
+                continue
+            for r in range(nrows):
+                table.SetValue(r, 1 + (2 * ci), float(vpct[r]))
+                table.SetValue(r, 1 + (2 * ci) + 1, float(vcc[r]))
+
+        table_node.Modified()
+        table.Modified()
+
+        png_path = None
+        try:
+            png_path = self._dvh_render_matplotlib_png(table_name, centers2, curves_cached)
+        except Exception:
+            png_path = None
+        if png_path:
+            j2["png_path"] = png_path
+
+        x_col_name = "dose_gy"
+        if self.plot_widget is not None:
+            self.plot_widget.setVisible(True)
+
+        chart_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", f"{table_name}_chart")
+
+        created_series_nodes: list[Any] = []
+        if chart_node is not None:
+            self._set_chart_legend_visible(chart_node, False)
+            chart_node.RemoveAllPlotSeriesNodeIDs()
+
+            series_index = 0
+            for _, (col_vpct, _, c) in enumerate(col_specs):
+                kind = c.get("_kind", "")
+                dose_label = c.get("_dose_label", "")
+                rgb = c.get("_color", None) or (0.0, 0.0, 0.0)
+                dashed = dose_label == "B"
+                if "sigma" in kind:
+                    series_index = self._dvh_add_line_series(
+                        table_node,
+                        chart_node,
+                        table_name,
+                        x_col_name,
+                        series_index,
+                        col_vpct,
+                        rgb,
+                        "unc",
+                        width=2,
+                        dashed=False,
+                        opacity=0.35,
+                        created_series_nodes=created_series_nodes,
+                    )
+                else:
+                    series_index = self._dvh_add_line_series(
+                        table_node,
+                        chart_node,
+                        table_name,
+                        x_col_name,
+                        series_index,
+                        col_vpct,
+                        rgb,
+                        "mean",
+                        width=2,
+                        dashed=dashed,
+                        opacity=None,
+                        created_series_nodes=created_series_nodes,
+                    )
+
+            chart_node.SetTitle(table_name)
+            chart_node.SetXAxisTitle("Dose (Gy)")
+            chart_node.SetYAxisTitle("Volume (%)")
+
+            x_max = float(centers2[-1]) if int(nrows) > 0 else None
+            if x_max is not None and x_max > 0:
+                for m in ("SetXAxisRange", "SetXRange"):
+                    if hasattr(chart_node, m):
+                        getattr(chart_node, m)(0.0, float(x_max))
+                        break
+
+            self._set_plot_chart_on_widget(chart_node)
+
+        structure_items = []
+        seen = set()
+        for c in list(curves_cached):
+            name = c.get("_seg_name", "")
+            color = c.get("_color", None) or (0.0, 0.0, 0.0)
+            if name and name not in seen:
+                seen.add(name)
+                structure_items.append({"name": name, "color": color})
+        self._update_legend(structure_items=structure_items)
+
+        self._dvh_reparent_outputs(table_node, chart_node, created_series_nodes, table_name, png_path)
+        self._set_progress(100, visible=False)
+        self._set_status("Done.")
+        self._dvh_finish(True, f"DVH written to table: {table_name}")
+
+    def _on_compute_dvh(self) -> None:
+        if self._active_job is not None:
+            QMessageBox.information(self, "Busy", "A DVH computation is already running.")
             return
         if slicer.mrmlScene is None:
             QMessageBox.warning(self, "No Scene", "MRML scene is not available.")
@@ -543,12 +1021,7 @@ class DVHWidget(BaseImpactWidget):
             else None
         )
 
-        out_base = self.output_name_edit.text or ""
-        try:
-            out_base = out_base() if callable(out_base) else out_base
-        except Exception:
-            out_base = ""
-        out_base = str(out_base).strip() or f"dvh_{uuid4().hex[:6]}"
+        out_base = self._line_edit_text(self.output_name_edit).strip() or f"dvh_{uuid4().hex[:6]}"
 
         # Build job.
         self._active_job = {
@@ -560,176 +1033,63 @@ class DVHWidget(BaseImpactWidget):
             "curves": [],
             "temp_nodes": [],
             "stage": "start",
-            "seg_color_by_id": {},
         }
-
-        self._last_out_base = out_base
-
-        self._last_png_path = None
-        # show_png button removed
 
         self._set_ui_busy(True)
         self._set_status("Preparing…")
         self._set_progress(0, visible=True)
 
-        def _cleanup_temp_nodes():
-            j = self._active_job
-            if j is None:
-                return
-            for tn in j.get("temp_nodes", []):
-                try:
-                    if tn is None or slicer.mrmlScene is None:
-                        continue
-                    try:
-                        in_scene = tn.GetScene() == slicer.mrmlScene
-                    except Exception:
-                        in_scene = False
-                    if not in_scene:
-                        continue
-                    # Remove display node(s) first to avoid VTK pipeline warnings.
-                    try:
-                        dn = tn.GetDisplayNode() if hasattr(tn, "GetDisplayNode") else None
-                        if dn is not None and dn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(dn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    # Remove storage node if present.
-                    try:
-                        sn = tn.GetStorageNode() if hasattr(tn, "GetStorageNode") else None
-                        if sn is not None and sn.GetScene() == slicer.mrmlScene:
-                            try:
-                                slicer.mrmlScene.RemoveNode(sn)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    # Finally remove the temp node itself.
-                    try:
-                        slicer.mrmlScene.RemoveNode(tn)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-        def _finish(ok: bool, msg: str = ""):
-            _cleanup_temp_nodes()
-            self._active_job = None
-            self._set_ui_busy(False)
-            self._set_progress(0, visible=False)
-            if msg:
-                try:
-                    QMessageBox.information(self, "DVH", str(msg)) if ok else QMessageBox.warning(self, "DVH", str(msg))
-                except Exception:
-                    pass
-
-        def _fail(msg: str):
-            _finish(False, msg)
-
         # Read dose arrays once (fast path) and pick automatic bins based on max dose.
         j = self._active_job
         dose_arrays = []
         dose_labels = []
-        try:
-            dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_a), dtype=np.float32))
-            dose_labels.append("A")
-        except Exception as exc:
-            _fail(f"Failed to read dose A array: {exc}")
-            return
+        dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_a), dtype=np.float32))
+        dose_labels.append("A")
+
         if dose_b is not None:
-            try:
-                dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_b), dtype=np.float32))
-                dose_labels.append("B")
-            except Exception:
-                dose_b = None
+            dose_arrays.append(np.asarray(slicer.util.arrayFromVolume(dose_b), dtype=np.float32))
+            dose_labels.append("B")
 
-        max_dose_raw = 0.0
-        for arr in dose_arrays:
-            try:
-                m = float(np.nanmax(arr))
-                if np.isfinite(m):
-                    max_dose_raw = max(max_dose_raw, m)
-            except Exception:
-                pass
-        if not np.isfinite(max_dose_raw) or max_dose_raw <= 0.0:
-            _fail("Max dose is 0 or invalid.")
-            return
+        # Update job dose list in case B failed to load.
+        j["dose_nodes"] = [dose_a] + ([dose_b] if dose_b is not None else [])
 
-        def _dose_grid_scaling_from_node(n) -> float:
-            if n is None or not hasattr(n, "GetAttribute"):
-                return 1.0
-            # Common attribute keys seen in Slicer for DICOM-loaded RTDOSE.
-            keys = (
-                "DoseGridScaling",
-                "DICOM.DoseGridScaling",
-                "DICOM.RTDOSE.DoseGridScaling",
-                "RTDOSE.DoseGridScaling",
-                "DicomRtDoseGridScaling",
-            )
-            for k in keys:
-                try:
-                    v = n.GetAttribute(k)
-                except Exception:
-                    v = None
-                if not v:
-                    continue
-                try:
-                    f = float(v)
-                    if np.isfinite(f) and f > 0:
-                        return float(f)
-                except Exception:
-                    continue
-            return 1.0
-
-        # Determine a per-dose scaling to Gy.
         # Prefer DICOM RTDOSE DoseGridScaling when present; otherwise fallback to heuristic.
         j["_dose_scale_by_label"] = {}
+        max_dose_raw = 0.0
         max_dose_gy = 0.0
-        for label, node, arr in zip(dose_labels, [dose_a] + ([dose_b] if dose_b is not None else []), dose_arrays):
-            s = 1.0
-            try:
-                s = float(_dose_grid_scaling_from_node(node))
-            except Exception:
-                s = 1.0
+        for label, node, arr in zip(dose_labels, j["dose_nodes"], dose_arrays):
+            m = float(np.nanmax(arr))
+            if np.isfinite(m):
+                max_dose_raw = max(max_dose_raw, m)
+
+            s = float(self._dvh_dose_grid_scaling_from_node(node))
 
             # Heuristic fallback if scaling attribute is absent/unity.
             if abs(float(s) - 1.0) < 1e-12:
-                try:
-                    m = float(np.nanmax(arr))
-                except Exception:
-                    m = 0.0
                 hs = 1.0
-                try:
-                    for _ in range(12):
-                        if not np.isfinite(m):
-                            break
-                        if (float(m) * float(hs)) > 200.0:
-                            hs *= 0.1
-                            continue
+                for _ in range(12):
+                    if not np.isfinite(m):
                         break
-                except Exception:
-                    hs = 1.0
+                    if (float(m) * float(hs)) > 200.0:
+                        hs *= 0.1
+                        continue
+                    break
                 s = float(hs)
 
             j["_dose_scale_by_label"][label] = float(s)
-            try:
-                m = float(np.nanmax(arr))
-                if np.isfinite(m):
-                    max_dose_gy = max(max_dose_gy, float(m) * float(s))
-            except Exception:
-                pass
+            if np.isfinite(m):
+                max_dose_gy = max(max_dose_gy, float(m) * float(s))
 
-        # Keep a representative scale for legend (dose A)
-        j["_dose_scale"] = float(j["_dose_scale_by_label"].get("A", 1.0))
+        if not np.isfinite(max_dose_raw) or max_dose_raw <= 0.0:
+            self._dvh_fail("Max dose is 0 or invalid.")
+            return
 
         max_dose = float(max_dose_gy)
 
         bw = self._auto_bin_width_gy(max_dose)
         edges = np.arange(0.0, float(max_dose) + float(bw), float(bw), dtype=np.float32)
         if edges.size < 2:
-            _fail("Failed to build DVH bins.")
+            self._dvh_fail("Failed to build DVH bins.")
             return
         centers = np.asarray(edges[:-1], dtype=np.float32)
         j["_bins_edges"] = edges
@@ -738,27 +1098,20 @@ class DVHWidget(BaseImpactWidget):
         # Resolve per-dose uncertainty arrays (if requested).
         j["_dose_arr_by_label"] = {}
         j["_unc_arr_by_label"] = {}
-        for label, _, darr in zip(dose_labels, [dose_a] + ([dose_b] if dose_b is not None else []), dose_arrays):
+        for label, darr in zip(dose_labels, dose_arrays):
             j["_dose_arr_by_label"][label] = darr
             unc_node = unc_a if label == "A" else unc_b
             if unc_node is not None:
-                uarr = None
-                try:
-                    uarr = np.asarray(slicer.util.arrayFromVolume(unc_node), dtype=np.float32)
-                except Exception:
-                    uarr = None
+                uarr = np.asarray(slicer.util.arrayFromVolume(unc_node), dtype=np.float32)
                 j["_unc_arr_by_label"][label] = uarr
             else:
                 j["_unc_arr_by_label"][label] = None
 
         # Pre-compute voxel volume in cc per dose label (use each dose spacing).
         j["_vox_cc_by_label"] = {}
-        for label, node in zip(dose_labels, [dose_a] + ([dose_b] if dose_b is not None else [])):
-            try:
-                sx, sy, sz = (float(v) for v in node.GetSpacing())
-                j["_vox_cc_by_label"][label] = (sx * sy * sz) * 1e-3
-            except Exception:
-                j["_vox_cc_by_label"][label] = 1.0
+        for label, node in zip(dose_labels, j["dose_nodes"]):
+            sx, sy, sz = (float(v) for v in node.GetSpacing())
+            j["_vox_cc_by_label"][label] = (sx * sy * sz) * 1e-3
 
         # Async loop over (dose label, segment).
         j["_dose_labels"] = list(dose_labels)
@@ -768,673 +1121,4 @@ class DVHWidget(BaseImpactWidget):
         self._set_status("Computing DVH…")
         self._set_progress(5, visible=True)
 
-        def _tick():
-            j2 = self._active_job
-            if j2 is None:
-                return
-
-            dlabels = j2.get("_dose_labels", [])
-            if not dlabels:
-                _fail("No dose selected.")
-                return
-            di = int(j2.get("_dose_idx", 0))
-            si = int(j2.get("_seg_idx", 0))
-            seg_ids2 = j2.get("seg_ids", [])
-            total = max(1, len(dlabels) * len(seg_ids2))
-
-            if di >= len(dlabels):
-                _build_outputs()
-                return
-            if si >= len(seg_ids2):
-                j2["_dose_idx"] = di + 1
-                j2["_seg_idx"] = 0
-                try:
-                    QTimer.singleShot(0, _tick)
-                except Exception:
-                    _tick()
-                return
-
-            label = str(dlabels[di])
-            seg_id = str(seg_ids2[si])
-            j2["_seg_idx"] = si + 1
-
-            dose_node = dose_a if label == "A" else dose_b
-            dose_arr = j2.get("_dose_arr_by_label", {}).get(label, None)
-            if dose_node is None or dose_arr is None:
-                try:
-                    QTimer.singleShot(0, _tick)
-                except Exception:
-                    _tick()
-                return
-
-            # Segment name + color
-            seg_name = seg_id
-            seg_color = None
-            try:
-                seg = j2["seg_node"].GetSegmentation()
-                seg_obj = seg.GetSegment(seg_id) if seg is not None else None
-                seg_name = seg_obj.GetName() if seg_obj is not None else seg_id
-                try:
-                    if seg_obj is not None and hasattr(seg_obj, "GetColor"):
-                        c = seg_obj.GetColor()
-                        seg_color = (float(c[0]), float(c[1]), float(c[2]))
-                except Exception:
-                    seg_color = None
-            except Exception:
-                seg_name = seg_id
-
-            if seg_color is not None:
-                try:
-                    j2.get("seg_color_by_id", {})[seg_id] = seg_color
-                except Exception:
-                    pass
-
-            mask = self.export_segment_mask(j2["seg_node"], seg_id, dose_node)
-            if mask is None:
-                pass
-            else:
-                try:
-                    if int(np.count_nonzero(mask)) > 0:
-                        bins_edges = j2.get("_bins_edges")
-                        vox_cc = float(j2.get("_vox_cc_by_label", {}).get(label, 1.0))
-                        scale = float(j2.get("_dose_scale_by_label", {}).get(label, j2.get("_dose_scale", 1.0)))
-                        vals = dose_arr[mask] * scale
-                        vpct, vcc = self._compute_cumulative_dvh(vals, bins_edges, vox_cc)
-                        dose_role = "Ref" if label == "A" else "Estimated"
-                        if vpct is not None:
-                            j2["curves"].append(
-                                {
-                                    "label": f"{dose_role} | {seg_name}",
-                                    "dose_label": label,
-                                    "seg_id": seg_id,
-                                    "seg_name": seg_name,
-                                    "kind": "mean",
-                                    "color": seg_color,
-                                    "vpct": vpct,
-                                    "vcc": vcc,
-                                }
-                            )
-
-                        # Optional uncertainty traces as DVH(dose±3σ)
-                        uarr = j2.get("_unc_arr_by_label", {}).get(label, None)
-                        if uarr is not None:
-                            try:
-                                uvals = 3.0 * uarr[mask] * scale
-                                plus = vals + uvals
-                                minus = np.maximum(vals - uvals, 0.0)
-                                vpct_p, vcc_p = self._compute_cumulative_dvh(plus, bins_edges, vox_cc)
-                                vpct_m, vcc_m = self._compute_cumulative_dvh(minus, bins_edges, vox_cc)
-                                if vpct_p is not None:
-                                    j2["curves"].append(
-                                        {
-                                            "label": f"{dose_role} | {seg_name} | max (+3σ)",
-                                            "dose_label": label,
-                                            "seg_id": seg_id,
-                                            "seg_name": seg_name,
-                                            "kind": "+3sigma",
-                                            "color": seg_color,
-                                            "vpct": vpct_p,
-                                            "vcc": vcc_p,
-                                        }
-                                    )
-                                if vpct_m is not None:
-                                    j2["curves"].append(
-                                        {
-                                            "label": f"{dose_role} | {seg_name} | min (-3σ)",
-                                            "dose_label": label,
-                                            "seg_id": seg_id,
-                                            "seg_name": seg_name,
-                                            "kind": "-3sigma",
-                                            "color": seg_color,
-                                            "vpct": vpct_m,
-                                            "vcc": vcc_m,
-                                        }
-                                    )
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-            done = min(total, (di * len(seg_ids2)) + (si + 1))
-            try:
-                p = 5 + int(80 * float(done) / float(total))
-            except Exception:
-                p = 50
-            self._set_progress(min(90, p), visible=True)
-            self._set_status(f"Computing DVH… ({done}/{total})")
-
-            try:
-                QTimer.singleShot(0, _tick)
-            except Exception:
-                _tick()
-
-        def _create_or_get_table_node(name: str):
-            if slicer.mrmlScene is None:
-                return None
-            try:
-                node = slicer.mrmlScene.GetFirstNodeByName(name)
-            except Exception:
-                node = None
-            if node is not None and hasattr(node, "IsA") and node.IsA("vtkMRMLTableNode"):
-                return node
-            try:
-                return slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", name)
-            except Exception:
-                return None
-
-        def _build_outputs():
-            j2 = self._active_job
-            if j2 is None:
-                return
-            self._set_status("Building table/plot…")
-            self._set_progress(92, visible=True)
-
-            # Legend is handled in the matplotlib PNG and UI legend; nothing to do here.
-
-            table_name = str(j2.get("out_base"))
-            table_node = _create_or_get_table_node(table_name)
-            if table_node is None:
-                _fail("Could not create output TableNode.")
-                return
-
-            table = table_node.GetTable()
-            table.Initialize()
-
-            centers2 = np.asarray(j2.get("_bins_centers"), dtype=np.float32)
-            nrows = int(centers2.size)
-
-            # X axis (dose in Gy)
-            xcol = vtk.vtkFloatArray()
-            xcol.SetName("dose_gy")
-            xcol.SetNumberOfTuples(nrows)
-            table.AddColumn(xcol)
-
-            # Note: vtkTable does not automatically resize columns added after SetNumberOfRows.
-            # Ensure every added column has nrows tuples to avoid VTK warnings.
-            table.SetNumberOfRows(nrows)
-            # Fill X column directly (more robust than vtkTable.SetValue for some builds)
-            for r in range(nrows):
-                try:
-                    xcol.SetValue(r, float(centers2[r]))
-                except Exception:
-                    pass
-            # Ensure column 0 name is set at the vtkTable level
-            try:
-                if hasattr(table, "SetColumnName"):
-                    table.SetColumnName(0, "dose_gy")
-            except Exception:
-                pass
-            try:
-                c0 = table.GetColumn(0)
-                if c0 is not None and hasattr(c0, "SetName"):
-                    c0.SetName("dose_gy")
-            except Exception:
-                pass
-
-            # Add one pair of columns per curve (V% and Vcc)
-            curves = list(j2.get("curves", []))
-            col_specs = []
-
-            def _safe_col_base(s: str) -> str:
-                try:
-                    txt = str(s)
-                except Exception:
-                    txt = ""
-                # Avoid non-ascii characters that can break MRML column lookups in some Slicer builds.
-                txt = txt.replace("σ", "sigma").replace("±", "+/-")
-                # Keep it readable but conservative.
-                try:
-                    import re
-
-                    txt = re.sub(r"[^0-9A-Za-z _\-|:+().]", "_", txt)
-                except Exception:
-                    pass
-                return txt
-
-            for c in curves:
-                label = str(c.get("label", "curve"))
-                col_base = _safe_col_base(label)
-                col_vpct = f"{col_base} | V%"
-                col_vcc = f"{col_base} | Vcc"
-                vp = vtk.vtkFloatArray()
-                vp.SetName(col_vpct)
-                vp.SetNumberOfTuples(nrows)
-                vc = vtk.vtkFloatArray()
-                vc.SetName(col_vcc)
-                vc.SetNumberOfTuples(nrows)
-                table.AddColumn(vp)
-                table.AddColumn(vc)
-                col_specs.append((col_vpct, col_vcc, c))
-
-            # Fill curve columns
-            for ci, (_, _, c) in enumerate(col_specs):
-                vpct = np.asarray(c.get("vpct"), dtype=np.float32)
-                vcc = np.asarray(c.get("vcc"), dtype=np.float32)
-                if vpct.size != nrows:
-                    continue
-                for r in range(nrows):
-                    try:
-                        table.SetValue(r, 1 + (2 * ci), float(vpct[r]))
-                        table.SetValue(r, 1 + (2 * ci) + 1, float(vcc[r]))
-                    except Exception:
-                        pass
-
-            def _render_matplotlib_png():
-                try:
-                    import matplotlib
-                except Exception:
-                    logger.exception("Matplotlib is not downloaded; download it to enable DVH plotting")
-                    slicer.util.pip_install("matplotlib")
-                    import matplotlib
-
-                matplotlib.use("Agg")
-                matplotlib.set_loglevel("warning")
-                import tempfile
-
-                import matplotlib.pyplot as plt
-
-                xs = np.asarray(centers2, dtype=np.float32)
-                if xs.size == 0:
-                    return None
-
-                try:
-                    plt.style.use("seaborn-v0_8-colorblind")
-                except Exception:
-                    pass
-
-                fig, ax = plt.subplots(figsize=(6.4, 4.0), dpi=110)
-                ax.set_facecolor("#f6f7fb")
-                ax.set_xlabel("Dose (Gy)")
-                ax.set_ylabel("Volume (%)")
-                ax.grid(True, alpha=0.25, color="#cfd3dc", linewidth=0.8)
-
-                grouped: dict[tuple[str, str], dict[str, Any]] = {}
-                for c in curves:
-                    key = (c.get("dose_label", ""), c.get("seg_id", ""))
-                    try:
-                        grouped.setdefault(key, {})[str(c.get("kind", "mean"))] = c
-                    except Exception:
-                        pass
-
-                structure_handles = []
-                structure_labels = []
-                added_struct_labels = set()
-                unc_patch_handle = None
-
-                for (_dl, _sid), ck in grouped.items():
-                    dose_label = _dl or ""
-                    mean_c = ck.get("mean")
-                    if mean_c is None:
-                        continue
-                    y_mean = np.asarray(mean_c.get("vpct"), dtype=np.float32)
-                    if y_mean.size != xs.size:
-                        continue
-                    rgb = mean_c.get("color", None) or (0.0, 0.0, 0.0)
-                    try:
-                        struct_label = str(mean_c.get("seg_name", "") or "")
-                    except Exception:
-                        struct_label = ""
-
-                    # Fill between -3σ et +3σ (gris translucide)
-                    upper_c = ck.get("+3sigma")
-                    lower_c = ck.get("-3sigma")
-                    if upper_c is not None and lower_c is not None:
-                        y_up = np.asarray(upper_c.get("vpct"), dtype=np.float32)
-                        y_lo = np.asarray(lower_c.get("vpct"), dtype=np.float32)
-                        if y_up.size == xs.size and y_lo.size == xs.size:
-                            try:
-                                ax.fill_between(xs, y_lo, y_up, color=rgb, alpha=0.20, linewidth=0)
-                                # keep fill for CI; add a single legend entry later
-                                if unc_patch_handle is None:
-                                    from matplotlib.patches import Patch
-
-                                    unc_patch_handle = Patch(
-                                        facecolor="#9ca3af", edgecolor="#4b5563", alpha=0.35, label="Uncertainty (±3σ)"
-                                    )
-                            except Exception:
-                                pass
-                    try:
-                        line_style = "--" if dose_label == "B" else "-"
-                        ax.plot(xs, y_mean, color=rgb, lw=1.8, alpha=1.0, linestyle=line_style, label=struct_label)
-                        try:
-                            line_handle = ax.lines[-1]
-                            if struct_label and struct_label not in added_struct_labels:
-                                added_struct_labels.add(struct_label)
-                                structure_handles.append(line_handle)
-                                structure_labels.append(struct_label)
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-                try:
-                    legend_handles = []
-                    legend_labels = []
-
-                    # Structures: one entry per structure (color-coded)
-                    legend_handles.extend(structure_handles)
-                    legend_labels.extend(structure_labels)
-
-                    # Dose roles (global)
-                    from matplotlib.lines import Line2D
-
-                    legend_handles.append(Line2D([], [], color="#111827", lw=1.8, linestyle="-", label="Dose ref"))
-                    legend_labels.append("Dose ref")
-                    legend_handles.append(
-                        Line2D([], [], color="#111827", lw=1.8, linestyle="--", label="Dose estimated")
-                    )
-                    legend_labels.append("Dose estimated")
-
-                    if unc_patch_handle is not None:
-                        legend_handles.append(unc_patch_handle)
-                        legend_labels.append("Uncertainty (±3σ)")
-
-                    ax.legend(legend_handles, legend_labels, loc="best", fontsize=8, frameon=True, fancybox=True)
-                except Exception:
-                    pass
-                try:
-                    fig.tight_layout()
-                except Exception:
-                    pass
-
-                def _safe_png_name(name: str) -> str:
-                    try:
-                        s = str(name or "")
-                    except Exception:
-                        s = ""
-                    if not s:
-                        s = "dvh"
-                    try:
-                        import re
-
-                        s = re.sub(r"[<>:\"/\\|?*]", "_", s)
-                    except Exception:
-                        s = s.replace(":", "_").replace("/", "_").replace("\\", "_")
-                    s = s.strip("._ ")
-                    return s or "dvh"
-
-                buf = io.BytesIO()
-                try:
-                    fig.savefig(buf, format="png", dpi=110)
-                except Exception:
-                    logger.exception("Failed to render matplotlib figure")
-                    return None
-                try:
-                    out_name = f"{_safe_png_name(table_name)}.png"
-                    out_path = os.path.join(tempfile.gettempdir(), out_name)
-                    with open(out_path, "wb") as f:
-                        f.write(buf.getvalue())
-                    return out_path
-                except Exception:
-                    return None
-                finally:
-                    try:
-                        plt.close(fig)
-                    except Exception:
-                        pass
-
-            table_node.Modified()
-            try:
-                table.Modified()
-            except Exception:
-                pass
-
-            try:
-                png_path = _render_matplotlib_png()
-                if png_path:
-                    j2["png_path"] = png_path
-                    self._last_png_path = png_path
-                    # show_png_btn removed
-            except Exception:
-                pass
-
-            x_col_name = "dose_gy"
-
-            # Plot (MRML only)
-            try:
-                if self.plot_widget is not None:
-                    self.plot_widget.setVisible(True)
-            except Exception:
-                pass
-
-            # Plot
-            chart_node = None
-            try:
-                chart_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", f"{table_name}_chart")
-            except Exception:
-                chart_node = None
-
-            if chart_node is not None:
-                # Hide internal legend (we use custom legend below the plot)
-                try:
-                    self._set_chart_legend_visible(chart_node, False)
-                except Exception:
-                    pass
-
-                try:
-                    chart_node.RemoveAllPlotSeriesNodeIDs()
-                except Exception:
-                    pass
-
-                # --- Uncertainty visualization: semi-transparent lines (no halo)
-                series_index = 0
-                created_series_nodes = []
-
-                def _add_line_series(
-                    y_col: str, rgb, name_suffix: str, width: int, dashed: bool, opacity=None, label=None
-                ) -> None:
-                    nonlocal series_index
-                    sname = f"{table_name}_{series_index:02d}_{name_suffix}"
-                    series_index += 1
-                    try:
-                        s = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", sname)
-                    except Exception:
-                        s = None
-                    if s is None:
-                        return
-                    try:
-                        s.SetAndObserveTableNodeID(table_node.GetID())
-                        if hasattr(s, "SetXColumnName"):
-                            try:
-                                s.SetXColumnName(x_col_name)
-                            except Exception:
-                                pass
-                        if hasattr(s, "SetYColumnName"):
-                            try:
-                                s.SetYColumnName(y_col)
-                            except Exception:
-                                pass
-                        s.SetPlotType(s.PlotTypeLine)
-                        s.SetMarkerStyle(s.MarkerStyleNone)
-                    except Exception:
-                        pass
-                    try:
-                        if dashed:
-                            s.SetLineStyle(s.LineStyleDash)
-                        else:
-                            s.SetLineStyle(s.LineStyleSolid)
-                    except Exception:
-                        pass
-                    try:
-                        if hasattr(s, "SetLineWidth"):
-                            s.SetLineWidth(int(width))
-                    except Exception:
-                        pass
-                    try:
-                        if rgb is not None and hasattr(s, "SetColor"):
-                            s.SetColor(float(rgb[0]), float(rgb[1]), float(rgb[2]))
-                    except Exception:
-                        pass
-                    if opacity is not None:
-                        try:
-                            self._apply_series_opacity(s, float(opacity))
-                        except Exception:
-                            pass
-                    # Set readable series name/title for legend
-                    # series naming omitted: legend handled in _update_legend
-                    try:
-                        s.Modified()
-                    except Exception:
-                        pass
-                    try:
-                        chart_node.AddAndObservePlotSeriesNodeID(s.GetID())
-                    except Exception:
-                        pass
-                    try:
-                        created_series_nodes.append(s)
-                    except Exception:
-                        pass
-
-                # Add uncertainty lines first (semi-transparent) then crisp mean lines on top
-                for _ci, (col_vpct, _col_vcc, c) in enumerate(col_specs):
-                    kind = str(c.get("kind", ""))
-                    dose_label = str(c.get("dose_label", ""))
-                    rgb = c.get("color", None) or (0.0, 0.0, 0.0)
-                    dashed = dose_label == "B"
-                    try:
-                        struct_label = str(c.get("seg_name", "") or "")
-                    except Exception:
-                        struct_label = ""
-                    if "sigma" in kind:
-                        _add_line_series(col_vpct, rgb, "unc", width=2, dashed=False, opacity=0.35, label=struct_label)
-                    else:
-                        _add_line_series(
-                            col_vpct, rgb, "mean", width=2, dashed=dashed, opacity=None, label=struct_label
-                        )
-
-                chart_node.SetTitle(table_name)
-                chart_node.SetXAxisTitle("Dose (Gy)")
-                chart_node.SetYAxisTitle("Volume (%)")
-
-                # Best-effort: force X axis range from our bin centers
-                try:
-                    x_max = float(centers2[-1]) if int(nrows) > 0 else None
-                except Exception:
-                    x_max = None
-                if x_max is not None and x_max > 0:
-                    for m in ("SetXAxisRange", "SetXRange"):
-                        try:
-                            if hasattr(chart_node, m):
-                                getattr(chart_node, m)(0.0, float(x_max))
-                                break
-                        except Exception:
-                            pass
-
-                self._set_plot_chart_on_widget(chart_node)
-
-                # Build custom legend items from computed curves (unique structures)
-                try:
-                    structure_items = []
-                    seen = set()
-                    for c in list(curves):
-                        try:
-                            name = str(c.get("seg_name", "") or "")
-                        except Exception:
-                            name = ""
-                        try:
-                            color = c.get("color", None) or (0.0, 0.0, 0.0)
-                        except Exception:
-                            color = (0.0, 0.0, 0.0)
-                        if name and name not in seen:
-                            seen.add(name)
-                            structure_items.append({"name": name, "color": color})
-                    try:
-                        self._update_legend(structure_items=structure_items)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-                # Move created nodes into a SubjectHierarchy folder to reduce node clutter.
-                try:
-                    sh_node = self._get_sh_node()
-                    if sh_node is not None:
-                        # Parent folder: try to use the same folder as Dose A when available.
-                        parent_item = 0
-                        try:
-                            dose_nodes = j2.get("dose_nodes", []) or []
-                            dose_a = dose_nodes[0] if len(dose_nodes) > 0 else None
-                        except Exception:
-                            dose_a = None
-                        try:
-                            if dose_a is not None:
-                                dose_item = int(sh_node.GetItemByDataNode(dose_a) or 0)
-                                if dose_item:
-                                    parent_item = int(sh_node.GetItemParent(dose_item) or 0)
-                        except Exception:
-                            parent_item = 0
-                        if not parent_item:
-                            try:
-                                parent_item = int(sh_node.GetSceneItemID() or 0)
-                            except Exception:
-                                parent_item = 0
-
-                        # Create/locate DVH root folder, then a subfolder for this run.
-                        def _find_child_folder(parent, name):
-                            try:
-                                ids = vtk.vtkIdList()
-                                sh_node.GetItemChildren(parent, ids)
-                                for ii in range(ids.GetNumberOfIds()):
-                                    child = ids.GetId(ii)
-                                    try:
-                                        if sh_node.GetItemName(child) == name:
-                                            return int(child)
-                                    except Exception:
-                                        continue
-                            except Exception:
-                                pass
-                            return 0
-
-                        dvh_root = _find_child_folder(parent_item, "DVH")
-                        if not dvh_root:
-                            try:
-                                dvh_root = int(sh_node.CreateFolderItem(parent_item, "DVH") or 0)
-                            except Exception:
-                                dvh_root = 0
-                        run_folder_name = str(table_name)
-                        run_folder = _find_child_folder(dvh_root, run_folder_name) if dvh_root else 0
-                        if dvh_root and not run_folder:
-                            try:
-                                run_folder = int(sh_node.CreateFolderItem(dvh_root, run_folder_name) or 0)
-                            except Exception:
-                                run_folder = 0
-
-                        def _reparent_node(node, parent_folder_item):
-                            if node is None or not parent_folder_item:
-                                return
-                            try:
-                                item = int(sh_node.GetItemByDataNode(node) or 0)
-                            except Exception:
-                                item = 0
-                            if not item:
-                                return
-                            try:
-                                sh_node.SetItemParent(item, int(parent_folder_item))
-                            except Exception:
-                                pass
-
-                        target_folder = run_folder or dvh_root
-                        _reparent_node(table_node, target_folder)
-                        _reparent_node(chart_node, target_folder)
-                        for s in created_series_nodes or []:
-                            _reparent_node(s, target_folder)
-
-                        png_node = None
-                        try:
-                            png_path = j2.get("png_path", None)
-                        except Exception:
-                            png_path = None
-                        if png_path:
-                            png_node = self._load_png_node(png_path, f"{table_name}_png")
-                            _reparent_node(png_node, target_folder)
-                except Exception:
-                    pass
-
-            self._set_progress(100, visible=False)
-            self._set_status("Done.")
-            _finish(True, f"DVH written to table: {table_name}")
-
-        try:
-            QTimer.singleShot(0, _tick)
-        except Exception:
-            _tick()
+        self._dvh_schedule_tick()

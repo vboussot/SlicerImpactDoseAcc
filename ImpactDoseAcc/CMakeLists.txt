@@ -4,6 +4,11 @@ set(MODULE_NAME ImpactDoseAcc)
 #-----------------------------------------------------------------------------
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
+  widgets/prescription_widget.py
+  widgets/accumulation_widget.py
+  widgets/metrics_widget.py
+  widgets/dvh_widget.py
+  widgets/base_widget.py  
   )
 
 

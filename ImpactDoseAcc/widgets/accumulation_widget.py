@@ -70,19 +70,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
         self._refresh_all()
 
-    def _set_status(self, text: str) -> None:
-        return super()._set_status(text)
-
-    def _set_progress(self, value, visible: bool = True) -> None:
-        return super()._set_progress(value, visible)
-
-    def _set_ui_busy(self, busy: bool) -> None:
-        return super()._set_ui_busy(busy)
-
-    def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
-        """Delegate to base implementation for running CLI jobs asynchronously."""
-        return super()._run_cli_async(cli_module, params, on_done, on_error)
-
     def _find_uncertainty_node(self, base: str):
         """Find the uncertainty volume corresponding to a Phase-1 output base."""
         if slicer.mrmlScene is None:
@@ -108,13 +95,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self._set_progress(0, visible=False)
             self._set_status("")
             if message:
-                try:
-                    QMessageBox.warning(self, "Compute Error", str(message))
-                except Exception:
-                    pass
-
-    def _combo_current_index(self, combo) -> int:
-        return super()._combo_current_index(combo)
+                QMessageBox.warning(self, "Compute Error", str(message))
 
     def _refresh_all(self) -> None:
         self._refresh_patient_list()
@@ -123,9 +104,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
     def _on_patient_changed(self, index: int) -> None:
         # Keep listing synced with patient selection
         self._refresh_fraction_list()
-
-    def _line_edit_text(self, line_edit) -> str:
-        return super()._line_edit_text(line_edit)
 
     def _double_spin_value(self, spin) -> float:
         if spin is None:
@@ -141,7 +119,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
         if input_node is None or reference_node is None:
             return False
 
-        # Compare dimensions without loading full voxel arrays.
         try:
             in_img = input_node.GetImageData()
             ref_img = reference_node.GetImageData()
@@ -166,9 +143,6 @@ class DoseAccumulationWidget(BaseImpactWidget):
             pass
         return False
 
-    def _safe_node_name(self, node) -> str:
-        return super()._safe_node_name(node)
-
     def _is_fraction_proxy_name(self, name: str) -> bool:
         """Return True if a MRML node name corresponds to a Phase-1 dose_list output."""
         n = str(name or "")
@@ -181,7 +155,8 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
     def _has_uncertainty_for_any_proxy(self, proxies) -> bool:
         for node in proxies or []:
-            base = self._base_name_from_dose_list(self._safe_node_name(node))
+            name = self._safe_node_name(node)
+            base = self._base_name_from_dose_list(name)
             if not base:
                 continue
             if self._find_uncertainty_node(base) is not None:
@@ -189,10 +164,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         return False
 
     def _clip(self, x: float, lo: float, hi: float) -> float:
-        try:
-            return float(min(max(float(x), float(lo)), float(hi)))
-        except Exception:
-            return float(lo)
+        return float(min(max(float(x), float(lo)), float(hi)))
 
     def _get_sh_node(self):
         if slicer.mrmlScene is None:
@@ -212,18 +184,11 @@ class DoseAccumulationWidget(BaseImpactWidget):
         current = int(item_id)
         last_parent = 0
         for _ in range(20):
-            level = ""
-            try:
-                level = sh_node.GetItemLevel(current)
-            except Exception:
-                level = ""
+            level = sh_node.GetItemLevel(current)
             if str(level).lower() == "patient":
                 return current
             parent = 0
-            try:
-                parent = sh_node.GetItemParent(current)
-            except Exception:
-                parent = 0
+            parent = sh_node.GetItemParent(current)
             if not parent:
                 break
             last_parent = int(parent)
@@ -265,12 +230,10 @@ class DoseAccumulationWidget(BaseImpactWidget):
     def _create_temp_resampled_volume(self, input_node, reference_node, interpolation: str = "linear"):
         out_name = f"{self._safe_node_name(input_node)}_resampled_{uuid4().hex[:6]}"
         out_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", out_name)
-        try:
-            out_node.SetHideFromEditors(1)
-            out_node.SetSelectable(0)
-            out_node.SetSaveWithScene(0)
-        except Exception:
-            pass
+        out_node.SetHideFromEditors(1)
+        out_node.SetSelectable(0)
+        out_node.SetSaveWithScene(0)
+
         return out_node
 
     def _selected_patient_item_id(self) -> int:
@@ -282,10 +245,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             return
 
         prev_item_id = 0
-        try:
-            prev_item_id = int(self._selected_patient_item_id() or 0)
-        except Exception:
-            prev_item_id = 0
+        prev_item_id = int(self._selected_patient_item_id() or 0)
 
         self._patient_item_id_map = {}
         self.patient_combo.blockSignals(True)
@@ -302,15 +262,9 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self.patient_combo.blockSignals(False)
             return
 
-        try:
-            root_id = int(sh_node.GetSceneItemID() or 0)
-        except Exception:
-            root_id = 0
+        root_id = int(sh_node.GetSceneItemID() or 0)
         if not root_id:
-            try:
-                root_id = int(sh_node.GetRootItemID() or 0)
-            except Exception:
-                root_id = 0
+            root_id = int(sh_node.GetRootItemID() or 0)
 
         ids = vtk.vtkIdList()
         try:
@@ -322,10 +276,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         for i in range(ids.GetNumberOfIds()):
             item_id = int(ids.GetId(i))
             level = ""
-            try:
-                level = sh_node.GetItemLevel(item_id)
-            except Exception:
-                level = ""
+            level = sh_node.GetItemLevel(item_id)
             if str(level).lower() == "patient":
                 patient_ids.append(item_id)
 
@@ -334,11 +285,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
         match_index = 0
         idx = 1
         for pid in patient_ids:
-            name = ""
-            try:
-                name = sh_node.GetItemName(pid) or ""
-            except Exception:
-                name = ""
+            name = sh_node.GetItemName(pid) or ""
             self.patient_combo.addItem(name or f"Patient {pid}")
             self._patient_item_id_map[idx] = pid
             if prev_item_id and int(pid) == int(prev_item_id):
@@ -346,10 +293,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             idx += 1
 
         if match_index:
-            try:
-                self.patient_combo.setCurrentIndex(match_index)
-            except Exception:
-                pass
+            self.patient_combo.setCurrentIndex(match_index)
 
         self.patient_combo.blockSignals(False)
 
@@ -359,16 +303,11 @@ class DoseAccumulationWidget(BaseImpactWidget):
         sh_node = self._get_sh_node()
         if sh_node is None:
             return 0
-        try:
-            item_id = int(sh_node.GetItemByDataNode(node) or 0)
-        except Exception:
-            item_id = 0
+        item_id = int(sh_node.GetItemByDataNode(node) or 0)
+
         if not item_id:
             return 0
-        try:
-            return int(self._get_subject_item_id_from_sh(sh_node, item_id) or 0)
-        except Exception:
-            return 0
+        return int(self._get_subject_item_id_from_sh(sh_node, item_id) or 0)
 
     def _clear_fraction_list_ui(self) -> None:
         # Reset cached UI state
@@ -376,29 +315,18 @@ class DoseAccumulationWidget(BaseImpactWidget):
         self._fraction_checkboxes = []
         self._weight_spinboxes_by_id = {}
 
-        # Remove all widgets/spacers from the fractions container layout
-        try:
-            layout = self.fractions_container_layout
-        except Exception:
-            layout = None
+        layout = self.fractions_container_layout
         if layout is None:
             return
 
-        try:
-            while layout.count() > 0:
-                item = layout.takeAt(0)
-                if item is None:
-                    continue
-                w = item.widget()
-                if w is not None:
-                    try:
-                        w.setParent(None)
-                        w.deleteLater()
-                    except Exception:
-                        pass
-                # spacerItem/layout items are handled by takeAt() removal
-        except Exception:
-            pass
+        while layout.count() > 0:
+            item = layout.takeAt(0)
+            if item is None:
+                continue
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
 
     def _refresh_fraction_list(self) -> None:
         self._clear_fraction_list_ui()
@@ -418,8 +346,8 @@ class DoseAccumulationWidget(BaseImpactWidget):
         for _, node in volume_nodes.items():
             if node is None:
                 continue
-            name = self._safe_node_name(node)
-            if not self._is_fraction_proxy_name(name):
+            node_name = self._safe_node_name(node)
+            if not self._is_fraction_proxy_name(node_name):
                 continue
             if self._node_patient_item_id(node) != int(selected_patient_id):
                 continue
@@ -429,26 +357,14 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
         has_uncertainty = self._has_uncertainty_for_any_proxy(proxies)
         if self.strategy_combo is not None:
-            try:
-                model = self.strategy_combo.model()
-            except Exception:
-                model = None
-            try:
-                count = self.strategy_combo.count()
-            except Exception:
-                count = 0
+            model = self.strategy_combo.model()
+            count = self.strategy_combo.count
             for i in range(count):
-                try:
-                    item = model.item(i) if model is not None else None
-                    if item is not None:
-                        item.setEnabled(bool(has_uncertainty or i == 0))
-                except Exception:
-                    pass
+                item = model.item(i) if model is not None else None
+                if item is not None:
+                    item.setEnabled(bool(has_uncertainty or i == 0))
             if not has_uncertainty:
-                try:
-                    self.strategy_combo.setCurrentIndex(0)
-                except Exception:
-                    pass
+                self.strategy_combo.setCurrentIndex(0)
 
         for node in proxies:
             node_id = node.GetID() if hasattr(node, "GetID") else None
@@ -456,12 +372,10 @@ class DoseAccumulationWidget(BaseImpactWidget):
                 continue
             row = QWidget()
             row_layout = QHBoxLayout(row)
-            try:
-                row_layout.setContentsMargins(0, 0, 0, 0)
-            except Exception:
-                pass
+            row_layout.setContentsMargins(0, 0, 0, 0)
 
-            cb = QCheckBox(self._safe_node_name(node))
+            node_name = self._safe_node_name(node)
+            cb = QCheckBox(node_name)
             cb.setChecked(False)
             cb.setProperty("node_id", node_id)
 
@@ -515,18 +429,15 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
         selected_items = []  # list of (dose_list_node, weight)
         for cb in self._fraction_checkboxes:
-            try:
-                if not cb.isChecked():
-                    continue
-                node_id = cb.property("node_id")
-                node = self._proxy_nodes_by_id.get(node_id)
-                if node is None:
-                    continue
-                w_spin = self._weight_spinboxes_by_id.get(node_id)
-                weight = self._double_spin_value(w_spin)
-                selected_items.append((node, float(weight)))
-            except Exception:
+            if not cb.isChecked():
                 continue
+            node_id = cb.property("node_id")
+            node = self._proxy_nodes_by_id.get(node_id)
+            if node is None:
+                continue
+            w_spin = self._weight_spinboxes_by_id.get(node_id)
+            weight = self._double_spin_value(w_spin)
+            selected_items.append((node, float(weight)))
 
         if not selected_items:
             QMessageBox.warning(self, "Missing Inputs", "Select at least one dose_list output.")
@@ -650,41 +561,34 @@ class DoseAccumulationWidget(BaseImpactWidget):
             if not key:
                 continue
             eval_map[("dose", key)] = dose_list_node
-            try:
-                if self._needs_resample_to_reference(dose_list_node, ref):
-                    tasks.append({"kind": "dose", "key": key, "src": dose_list_node, "interp": "linear"})
-            except Exception:
-                pass
+            if self._needs_resample_to_reference(dose_list_node, ref):
+                tasks.append({"kind": "dose", "key": key, "src": dose_list_node, "interp": "linear"})
 
         # Uncertainty volumes
         if job["uncertainty_aware"]:
             for dose_list_node, _ in job["selected_items"]:
-                base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
+                name = self._safe_node_name(dose_list_node)
+                base = self._base_name_from_dose_list(name)
                 if not base:
                     continue
                 unc_node = self._find_uncertainty_node(base)
                 if unc_node is None:
                     continue
                 eval_map[("unc", base)] = unc_node
-                try:
-                    if self._needs_resample_to_reference(unc_node, ref):
-                        tasks.append({"kind": "unc", "key": base, "src": unc_node, "interp": "linear"})
-                except Exception:
-                    pass
+                if self._needs_resample_to_reference(unc_node, ref):
+                    tasks.append({"kind": "unc", "key": base, "src": unc_node, "interp": "linear"})
 
         # DVF magnitude volumes (for anatomy-driven weighting)
         if job["dvf_mag_weighting"]:
             for dose_list_node, _ in job["selected_items"]:
-                base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
+                name = self._safe_node_name(dose_list_node)
+                base = self._base_name_from_dose_list(name)
                 if not base:
                     continue
                 dvf_node = slicer.mrmlScene.GetFirstNodeByName(f"dvf_magnitude_{base}")
                 eval_map[("dvfmag", base)] = dvf_node
-                try:
-                    if self._needs_resample_to_reference(dvf_node, ref):
-                        tasks.append({"kind": "dvfmag", "key": base, "src": dvf_node, "interp": "linear"})
-                except Exception:
-                    pass
+                if self._needs_resample_to_reference(dvf_node, ref):
+                    tasks.append({"kind": "dvfmag", "key": base, "src": dvf_node, "interp": "linear"})
 
         job["_resample_tasks"] = tasks
         job["_resample_index"] = 0
@@ -724,10 +628,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                     return
                 j2["eval"][(kind, key)] = out_node
                 j2["_resample_index"] = int(j2.get("_resample_index", 0)) + 1
-                try:
-                    p = 5 + int(35 * float(j2["_resample_index"]) / float(max(1, n)))
-                except Exception:
-                    p = 10
+                p = 5 + int(35 * float(j2["_resample_index"]) / float(max(1, n)))
                 self._set_progress(min(40, p), visible=True)
                 try:
                     QTimer.singleShot(0, _run_next_resample)
@@ -768,42 +669,33 @@ class DoseAccumulationWidget(BaseImpactWidget):
                         m_ref = float(np.median(m_values))
                         if np.isfinite(m_ref) and m_ref > 0.0:
                             for nid, m_i in mags:
-                                try:
-                                    alpha_by_node_id[nid] = self._clip(float(m_i) / float(m_ref), 0.5, 2.0)
-                                except Exception:
-                                    pass
+                                alpha_by_node_id[nid] = self._clip(float(m_i) / float(m_ref), 0.5, 2.0)
                     j2["alpha_by_node_id"] = alpha_by_node_id
                     _start_accum_loop()
                     return
 
                 dose_list_node, w = items[idx]
                 j2["_dvf_idx"] = idx + 1
-                try:
-                    if float(w) <= 0.0:
-                        raise RuntimeError("skip")
-                    node_id = dose_list_node.GetID() if hasattr(dose_list_node, "GetID") else None
-                    if not node_id:
-                        raise RuntimeError("skip")
-                    base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
-                    dvf_node = j2["eval"].get(("dvfmag", base), None)
-                    if dvf_node is None:
-                        raise RuntimeError("skip")
-                    arr = slicer.util.arrayFromVolume(dvf_node).astype(np.float32, copy=False)
-                    if arr.size == 0:
-                        raise RuntimeError("skip")
-                    flat = arr.reshape(-1)
-                    flat = flat[np.isfinite(flat)]
-                    if flat.size == 0:
-                        raise RuntimeError("skip")
-                    m_i = float(np.percentile(flat, 95))
-                    j2["_mags"].append((node_id, m_i))
-                except Exception:
-                    pass
+                if float(w) <= 0.0:
+                    raise RuntimeError("skip")
+                node_id = dose_list_node.GetID() if hasattr(dose_list_node, "GetID") else None
+                if not node_id:
+                    raise RuntimeError("skip")
+                base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
+                dvf_node = j2["eval"].get(("dvfmag", base), None)
+                if dvf_node is None:
+                    raise RuntimeError("skip")
+                arr = slicer.util.arrayFromVolume(dvf_node).astype(np.float32, copy=False)
+                if arr.size == 0:
+                    raise RuntimeError("skip")
+                flat = arr.reshape(-1)
+                flat = flat[np.isfinite(flat)]
+                if flat.size == 0:
+                    raise RuntimeError("skip")
+                m_i = float(np.percentile(flat, 95))
+                j2["_mags"].append((node_id, m_i))
 
-                try:
-                    p = 40 + int(15 * float(idx + 1) / float(max(1, len(items))))
-                except Exception:
-                    p = 45
+                p = 40 + int(15 * float(idx + 1) / float(max(1, len(items))))
                 self._set_progress(min(55, p), visible=True)
                 try:
                     QTimer.singleShot(0, _tick)
@@ -851,10 +743,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                         _tick()
                     return
 
-                try:
-                    dose_id = dose_list_node.GetID() if hasattr(dose_list_node, "GetID") else None
-                except Exception:
-                    dose_id = None
+                dose_id = dose_list_node.GetID() if hasattr(dose_list_node, "GetID") else None
                 eval_dose = j2["eval"].get(("dose", dose_id), dose_list_node)
 
                 try:
@@ -873,7 +762,8 @@ class DoseAccumulationWidget(BaseImpactWidget):
                     j2["sum_mean"] = j2["sum_mean"] + (arr * np.float32(w))
 
                 if j2.get("uncertainty_aware"):
-                    base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
+                    dose_name = self._safe_node_name(dose_list_node)
+                    base = self._base_name_from_dose_list(dose_name)
                     unc_node = j2["eval"].get(("unc", base), None)
                     if unc_node is not None:
                         try:
@@ -911,10 +801,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                 j2["sum_w"] = float(j2.get("sum_w", 0.0)) + w
                 j2["used"] = int(j2.get("used", 0)) + 1
 
-                try:
-                    p = 55 + int(40 * float(idx + 1) / float(max(1, len(items))))
-                except Exception:
-                    p = 70
+                p = 55 + int(40 * float(idx + 1) / float(max(1, len(items))))
                 self._set_progress(min(95, p), visible=True)
                 try:
                     QTimer.singleShot(0, _tick)
@@ -975,18 +862,15 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
             _cleanup_temp_nodes()
 
-            try:
-                QMessageBox.information(
-                    self,
-                    "Accumulation Complete",
-                    (
-                        f"Accumulated {used2} fraction(s).\n"
-                        f"Output: {self._safe_node_name(acc_volume)}"
-                        + (f"\nUncertainty: {self._safe_node_name(unc_volume)}" if unc_volume else "")
-                    ),
-                )
-            except Exception:
-                pass
+            QMessageBox.information(
+                self,
+                "Accumulation Complete",
+                (
+                    f"Accumulated {used2} fraction(s).\n"
+                    f"Output: {self._safe_node_name(acc_volume)}"
+                    + (f"\nUncertainty: {self._safe_node_name(unc_volume)}" if unc_volume else "")
+                ),
+            )
             self._finish_job(True, "Done.")
 
         try:
