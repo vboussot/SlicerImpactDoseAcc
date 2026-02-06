@@ -25,9 +25,8 @@ class DVHWidget(BaseImpactWidget):
     - Automatic binning based on max dose.
     """
 
-    def __init__(self, logic):
+    def __init__(self):
         super().__init__()
-        self.logic = logic
         self._dose_node_by_index_a = {0: None}
         self._dose_node_by_index_b = {0: None}
         self._segment_checkbox_by_id = {}

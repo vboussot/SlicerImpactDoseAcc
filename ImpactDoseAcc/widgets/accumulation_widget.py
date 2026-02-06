@@ -14,9 +14,8 @@ logger = logging.getLogger(__name__)
 
 class DoseAccumulationWidget(BaseImpactWidget):
 
-    def __init__(self, logic):
-        super().__init__(logic)
-        self.logic = logic
+    def __init__(self):
+        super().__init__()
         self._patient_item_id_map = {}
         self._proxy_nodes_by_id = {}
         self._fraction_checkboxes = []
@@ -58,7 +57,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self.strategy_combo.addItem("DVF magnitude-driven (anatomy) – uncertainty weighting from dvf_magnitude")
 
         if self.output_name_edit is not None:
-            self.output_name_edit.setText(self._generate_default_output_name(prefix="dose_acc"))
+            self.output_name_edit.setText(self._generate_default_output_name(prefix=""))
 
         if self.progress_bar is not None:
             self.progress_bar.setRange(0, 100)

@@ -28,8 +28,8 @@ class _ThreadState(TypedDict):
 class MetricsEvaluationWidget(BaseImpactWidget):
     """UI widget for Phase 3: Metrics & Evaluation."""
 
-    def __init__(self, logic):
-        super().__init__(logic)
+    def __init__(self):
+        super().__init__()
         self._ref_dose_node_by_index = {}
         self._out_dose_node_by_index = {}
         self._unc_node_by_index = {}

@@ -252,14 +252,13 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
     def __init__(
         self,
-        logic,
         export_callback=None,
         browse_export_dir_callback=None,
         import_callback=None,
         deform_callback=None,
         refresh_sessions_callback=None,
     ):
-        super().__init__(logic)
+        super().__init__()
         # create a logger for this widget
         self._logger = logging.getLogger(self.__class__.__name__)
         self._session_widgets = []
