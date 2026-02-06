@@ -57,7 +57,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
             self.strategy_combo.addItem("DVF magnitude-driven (anatomy) – uncertainty weighting from dvf_magnitude")
 
         if self.output_name_edit is not None:
-            self.output_name_edit.setText(self._generate_default_output_name(prefix=""))
+            self.output_name_edit.setText(self._generate_default_output_name(prefix="dose_acc"))
 
         if self.progress_bar is not None:
             self.progress_bar.setRange(0, 100)
@@ -956,7 +956,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                     sum_var2 = np.maximum(sum_var2, 0.0)
                 sum_var2 = sum_var2.astype(np.float32, copy=False) / np.float32(sum_w2 * sum_w2)
 
-            acc_name = f"dose_acc_{j['output_base_name']}"
+            acc_name = f"{j['output_base_name']}"
             acc_volume = self._create_or_update_volume(acc_name, j["ref_node"], sum_mean2, existing_node=None)
             self._ensure_node_in_sh_folder(acc_volume, j["folder_item_id"])
 

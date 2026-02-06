@@ -1,12 +1,12 @@
 import logging
-import os
-from collections.abc import Iterable
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
 import slicer
 import vtk
-from qt import QTimer, QVBoxLayout, QWidget
+from qt import QTimer, QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -14,25 +14,15 @@ logger = logging.getLogger(__name__)
 class BaseImpactWidget(QWidget):
 
     def _is_name_match(self, node, needle: str) -> bool:
-        try:
-            return str(needle).lower() in self._safe_node_name(node).lower()
-        except Exception:
-            logger.exception("_is_name_match failed")
-            return False
+        return str(needle).lower() in self._safe_node_name(node).lower()
 
     def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
-        """Run a Slicer CLI without blocking the UI. Shared implementation for widgets.
-
-        on_done/on_error are callables that will be invoked when the job finishes.
-        """
+        """Run a Slicer CLI without blocking the UI. Shared implementation for widgets."""
         try:
             cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
         except Exception as exc:
             logger.exception("Failed to start CLI")
-            try:
-                on_error(exc)
-            except Exception:
-                logger.exception("on_error raised while handling CLI start failure")
+            on_error(exc)
             return
 
         holder = {"tag": None, "handled": False}
@@ -50,7 +40,7 @@ class BaseImpactWidget(QWidget):
                 logger.exception("Error removing CLI node from scene")
 
         def _finish(ok: bool, err: Exception | None = None):
-            if holder.get("handled", False):
+            if holder["handled"]:
                 return
             holder["handled"] = True
 
@@ -64,10 +54,7 @@ class BaseImpactWidget(QWidget):
                 except Exception:
                     logger.exception("on_done/on_error raised during CLI finish handling")
 
-            try:
-                QTimer.singleShot(0, _do_finish)
-            except Exception:
-                _do_finish()
+            QTimer.singleShot(0, _do_finish)
 
         def _status_tuple():
             try:
@@ -78,49 +65,41 @@ class BaseImpactWidget(QWidget):
                 except Exception:
                     return (None, "")
 
-        def _on_modified(caller, event):
+        def _on_modified(_caller, _event):
             status, status_str = _status_tuple()
-            try:
-                completed = hasattr(cli_node, "Completed") and status == cli_node.Completed
-                failed = hasattr(cli_node, "Failed") and status == cli_node.Failed
-                cancelled = hasattr(cli_node, "Cancelled") and status == cli_node.Cancelled
-            except Exception:
-                completed = failed = cancelled = False
 
-            if (status_str or "").lower() in ("completed", "completed with errors"):
+            completed = hasattr(cli_node, "Completed") and status == cli_node.Completed
+            failed = hasattr(cli_node, "Failed") and status == cli_node.Failed
+            cancelled = hasattr(cli_node, "Cancelled") and status == cli_node.Cancelled
+
+            s = (status_str or "").lower()
+            if s in ("completed", "completed with errors"):
                 completed = True
-            if (status_str or "").lower() in ("failed",):
+            elif s == "failed":
                 failed = True
-            if (status_str or "").lower() in ("cancelled", "canceled"):
+            elif s in ("cancelled", "canceled"):
                 cancelled = True
 
             if not (completed or failed or cancelled):
                 return
 
             if failed:
-                msg = None
                 try:
                     msg = str(cli_node.GetErrorText())
                 except Exception:
                     msg = None
                 _finish(False, RuntimeError(msg or "CLI failed"))
-                return
-
-            if cancelled:
+            elif cancelled:
                 _finish(False, RuntimeError("CLI cancelled"))
-                return
-
-            _finish(True)
+            else:
+                _finish(True)
 
         try:
             holder["tag"] = cli_node.AddObserver(vtk.vtkCommand.ModifiedEvent, _on_modified)
         except Exception as exc:
             logger.exception("Failed to add observer to CLI node")
             _cleanup()
-            try:
-                on_error(exc)
-            except Exception:
-                logger.exception("on_error raised while handling observer add failure")
+            on_error(exc)
 
     def __init__(self, logic=None):
         super().__init__()
@@ -135,41 +114,27 @@ class BaseImpactWidget(QWidget):
         idx_attr = getattr(combo, "currentIndex", 0)
         return int(idx_attr() if callable(idx_attr) else idx_attr)
 
-    # --- UI helpers ---
-    def load_ui(self, ui_path: str):
-        ui_widget = slicer.util.loadUI(os.path.normpath(ui_path))
-        self.ui = slicer.util.childWidgetVariables(ui_widget)
-        self._root_widget = ui_widget
-        layout = QVBoxLayout(self)
-        layout.addWidget(ui_widget)
-        self.setLayout(layout)
-        return ui_widget
-
-    def _w(self, name):
+    def _w(self, name: str) -> Any:
         return getattr(self.ui, name, None) if hasattr(self, "ui") else None
 
-    def _layout(self, widget_name):
+    def _layout(self, widget_name: str) -> Any:
         w = self._w(widget_name)
         return w.layout() if w is not None and hasattr(w, "layout") else None
 
-    def _btn(self, name, cb):
+    def _btn(self, name: str, cb: Callable[[], None] | None) -> Any:
         btn = self._w(name)
         if btn is not None and cb:
             btn.clicked.connect(cb)
         return btn
 
-    def _line_edit_text(self, line_edit) -> str:
+    def _line_edit_text(self, line_edit: Any) -> str:
         if line_edit is None:
             return ""
         text_attr = getattr(line_edit, "text", "")
-        try:
-            val = text_attr() if callable(text_attr) else text_attr
-            return "" if val is None else str(val)
-        except Exception:
-            logger.exception("_line_edit_text failed")
-            return ""
+        val = text_attr() if callable(text_attr) else text_attr
+        return "" if val is None else str(val)
 
-    def _safe_node_name(self, node) -> str:
+    def _safe_node_name(self, node: Any) -> str:
         if node is None or not hasattr(node, "GetName"):
             return ""
         try:
@@ -199,7 +164,7 @@ class BaseImpactWidget(QWidget):
         return f"{prefix}_{uuid4().hex[:2]}"
 
     # --- MRML helpers ---
-    def _get_sh_node(self):
+    def _get_sh_node(self) -> Any:
         if slicer.mrmlScene is None:
             return None
         try:
@@ -208,26 +173,22 @@ class BaseImpactWidget(QWidget):
             logger.exception("_get_sh_node failed")
             return None
 
-    def export_segment_mask(self, segmentation_node, segment_id: str, reference_volume_node):
+    def export_segment_mask(
+        self, segmentation_node: Any, segment_id: str, reference_volume_node: Any
+    ) -> np.ndarray | None:
         if slicer.mrmlScene is None or segmentation_node is None or reference_volume_node is None:
             return None
-        try:
-            fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
-            if callable(fn):
-                arr = fn(segmentation_node, segment_id, reference_volume_node)
-                if arr is None:
-                    return None
-                return np.asarray(arr) > 0
-        except Exception:
-            logger.exception("arrayFromSegmentBinaryLabelmap call failed")
+        fn = getattr(slicer.util, "arrayFromSegmentBinaryLabelmap", None)
+        if callable(fn):
+            arr = fn(segmentation_node, segment_id, reference_volume_node)
+            if arr is None:
+                return None
+            return np.asarray(arr) > 0
 
         labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", f"tmp_dvh_{uuid4().hex[:3]}")
-        try:
-            labelmap.SetHideFromEditors(1)
-            labelmap.SetSelectable(0)
-            labelmap.SetSaveWithScene(0)
-        except Exception:
-            logger.exception("Failed to set labelmap properties")
+        labelmap.SetHideFromEditors(1)
+        labelmap.SetSelectable(0)
+        labelmap.SetSaveWithScene(0)
 
         try:
             seg_logic = slicer.modules.segmentations.logic()
@@ -246,82 +207,14 @@ class BaseImpactWidget(QWidget):
             except Exception:
                 logger.exception("Failed to remove temporary labelmap node")
 
-    def dose_grid_scaling_from_node(self, node) -> float:
-        if node is None or not hasattr(node, "GetAttribute"):
-            return 1.0
-        keys = (
-            "DoseGridScaling",
-            "DICOM.DoseGridScaling",
-            "DICOM.RTDOSE.DoseGridScaling",
-            "RTDOSE.DoseGridScaling",
-            "DicomRtDoseGridScaling",
-        )
-
-        for k in keys:
-            v = node.GetAttribute(k)
-            if not v:
-                continue
-            f = float(v)
-            if np.isfinite(f) and f > 0:
-                return float(f)
-
-        return 1.0
-
-    def set_background_volume(
-        self, volume_node, layout: str = "FourUp", viewers: Iterable[str] = ("Red", "Yellow", "Green")
-    ):
-        if slicer.app is None or slicer.mrmlScene is None or volume_node is None:
-            return
-        try:
-            lm = slicer.app.layoutManager()
-            if lm is None:
-                return
-            try:
-                layout_const = getattr(slicer.vtkMRMLLayoutNode, f"SlicerLayout{layout}View", None)
-                if layout_const is not None:
-                    lm.setLayout(layout_const)
-            except Exception:
-                logger.exception("set_background_volume: failed while setting layout")
-            for view_name in viewers:
-                try:
-                    sw = lm.sliceWidget(view_name)
-                    if sw is None:
-                        continue
-                    comp = sw.sliceLogic().GetSliceCompositeNode()
-                    comp.SetBackgroundVolumeID(volume_node.GetID())
-                except Exception:
-                    logger.exception("set_background_volume: failed while setting background for view %s", view_name)
-            try:
-                lm.resetSliceViews()
-            except Exception:
-                logger.exception("set_background_volume: resetSliceViews failed")
-        except Exception:
-            pass
-
-    def get_or_add_node(self, name: str, class_name: str):
-        if slicer.mrmlScene is None:
-            return None
-        try:
-            node = slicer.mrmlScene.GetFirstNodeByName(name)
-        except Exception:
-            logger.exception("get_or_add_node: GetFirstNodeByName failed for %s", name)
-            node = None
-        if node is not None and hasattr(node, "IsA") and node.IsA(class_name):
-            return node
-        try:
-            return slicer.mrmlScene.AddNewNodeByClass(class_name, name)
-        except Exception:
-            logger.exception("get_or_add_node: AddNewNodeByClass failed for %s (%s)", (name, class_name))
-            return None
-
-    def safe_remove(self, node) -> None:
+    def safe_remove(self, node: Any) -> None:
         try:
             if node is not None and slicer.mrmlScene is not None and node.GetScene() == slicer.mrmlScene:
                 slicer.mrmlScene.RemoveNode(node)
         except Exception:
             logger.exception("safe_remove failed")
 
-    def _find_uncertainty_in_same_folder(self, dose_node):
+    def _find_uncertainty_in_same_folder(self, dose_node: Any) -> Any:
         """Return an uncertainty volume that lives in the same Subject Hierarchy folder as the given dose volume.
 
         Preference order: prefer names matching 'uncertainty_{base}' or 'uncertainty_dose_{base}',
