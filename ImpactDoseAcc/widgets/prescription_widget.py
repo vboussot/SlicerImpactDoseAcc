@@ -498,16 +498,19 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         sequence_nodes = slicer.util.getNodes("vtkMRMLSequenceNode*")
 
         def _is_export_candidate_name(name: str) -> bool:
-            # Keep sCT list clean: exclude anything that looks like dose.
             return not self._name_contains_dose(name)
 
         for node_name, node in volume_nodes.items():
-            if (not _is_export_candidate_name(node_name)) or (
-                node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))
+            name_l = str(node_name or "").lower()
+            if (
+                "gamma" in name_l
+                or (not _is_export_candidate_name(node_name))
+                or (node is not None and (not _is_export_candidate_name(self._safe_node_name(node))))
             ):
                 continue
             if self._is_dicom_volume(node):
                 continue
+
             checkbox = QCheckBox(f"Volume: {node_name}")
             checkbox.setChecked(False)
             node_id = f"vol_{node_name}"
@@ -636,98 +639,26 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         if disp_node is None:
             return None
 
-        created = False
-        returned_arr = None
+        # Use the only supported API in your environment.
+        transforms_logic = slicer.modules.transforms.logic() if hasattr(slicer.modules, "transforms") else None
+        method = getattr(transforms_logic, "CreateDisplacementVolumeFromTransform", None)
+        if method is None:
+            return None
+        method(transform_node, reference_volume_node, disp_node)
 
-        def _try_logic(logic_obj) -> None:
-            nonlocal created, returned_arr
-            if logic_obj is None or created or returned_arr is not None:
-                return
-            for method_name in (
-                "CreateDisplacementVolumeFromTransform",
-                "CreateDisplacementVolumeFromTransformNode",
-                "CreateDisplacementField",
-            ):
-                if not hasattr(logic_obj, method_name):
-                    continue
-                method = getattr(logic_obj, method_name, None)
-                if method is None:
-                    continue
-                for args in (
-                    (transform_node, reference_volume_node, disp_node),
-                    (transform_node, disp_node, reference_volume_node),
-                ):
-                    try:
-                        method(*args)
-                        created = True
-                        return
-                    except Exception:
-                        continue
-
-                for args in ((transform_node, reference_volume_node), (transform_node,)):
-                    try:
-                        out = method(*args)
-                    except Exception:
-                        continue
-                    if out is None:
-                        continue
-                    try:
-                        returned_arr = slicer.util.arrayFromVolume(out).astype(np.float32, copy=False)
-                    except Exception:
-                        returned_arr = None
-                    try:
-                        if out.GetScene() == slicer.mrmlScene:
-                            self.safe_remove(out)
-                    except Exception:
-                        pass
-                    if returned_arr is not None:
-                        created = True
-                        return
-
-        # Try Transforms module logic first (preferred).
-        try:
-            transforms_logic = slicer.modules.transforms.logic() if hasattr(slicer.modules, "transforms") else None
-        except Exception:
-            transforms_logic = None
-
-        _try_logic(transforms_logic)
-
-        # As a fallback, try vtkSlicerTransformLogic if exposed.
-        if (not created) and hasattr(slicer, "vtkSlicerTransformLogic"):
-            try:
-                tl = slicer.vtkSlicerTransformLogic()
-                _try_logic(tl)
-            except Exception:
-                created = False
-
-        if returned_arr is not None:
-            return returned_arr
-
-        # Try reading from our vector output node.
         arr = None
-        try:
-            if disp_node.GetImageData() is not None:
-                arr = slicer.util.arrayFromVolume(disp_node).astype(np.float32, copy=False)
-        except Exception:
-            arr = None
+        if disp_node.GetImageData() is not None:
+            arr = slicer.util.arrayFromVolume(disp_node).astype(np.float32, copy=False)
 
-        # Side-effect fallback: find newly created vector volume or scalar "displacement magnitude".
         after_ids = set()
-        try:
-            n = slicer.mrmlScene.GetNumberOfNodes()
-            for i in range(n):
-                node = slicer.mrmlScene.GetNthNode(i)
-                if node is not None:
-                    after_ids.add(node.GetID())
-        except Exception:
-            after_ids = set()
+        n = slicer.mrmlScene.GetNumberOfNodes()
+        for i in range(n):
+            node = slicer.mrmlScene.GetNthNode(i)
+            if node is not None:
+                after_ids.add(node.GetID())
 
         new_ids = list(after_ids - before_ids)
-        disp_id = None
-        try:
-            disp_id = disp_node.GetID()
-        except Exception:
-            disp_id = None
+        disp_id = disp_node.GetID()
 
         if arr is None and new_ids:
             for node_id in reversed(new_ids):
@@ -736,56 +667,24 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                 node = slicer.mrmlScene.GetNodeByID(node_id)
                 if node is None:
                     continue
-                try:
-                    if node.IsA("vtkMRMLVectorVolumeNode"):
-                        arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
-                        break
-                except Exception:
-                    continue
+                if node.IsA("vtkMRMLScalarVolumeNode") and "displacement magnitude" in (node.GetName() or "").lower():
+                    arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
+                    break
 
-        if arr is None and new_ids:
-            for node_id in reversed(new_ids):
-                if disp_id and node_id == disp_id:
-                    continue
-                node = slicer.mrmlScene.GetNodeByID(node_id)
-                if node is None:
-                    continue
-                try:
-                    if (
-                        node.IsA("vtkMRMLScalarVolumeNode")
-                        and "displacement magnitude" in (node.GetName() or "").lower()
-                    ):
-                        arr = slicer.util.arrayFromVolume(node).astype(np.float32, copy=False)
-                        break
-                except Exception:
-                    continue
-
-        # Clean up side-effects (keep disp_node for later cleanup via temp_nodes).
         for node_id in new_ids:
             if disp_id and node_id == disp_id:
                 continue
-            node = None
-            try:
-                node = slicer.mrmlScene.GetNodeByID(node_id)
-            except Exception:
-                node = None
+            node = slicer.mrmlScene.GetNodeByID(node_id)
             if node is not None:
-                # Removing display nodes first helps avoid VTK pipeline warnings.
-                try:
-                    dn = node.GetDisplayNode() if hasattr(node, "GetDisplayNode") else None
-                    if dn is not None and dn.GetScene() == slicer.mrmlScene:
-                        slicer.mrmlScene.RemoveNode(dn)
-                except Exception:
-                    pass
+                dn = node.GetDisplayNode() if hasattr(node, "GetDisplayNode") else None
+                if dn is not None and dn.GetScene() == slicer.mrmlScene:
+                    slicer.mrmlScene.RemoveNode(dn)
                 self.safe_remove(node)
 
         return arr
 
     def _name_contains_dose(self, name: str) -> bool:
-        try:
-            return "dose" in str(name).lower()
-        except Exception:
-            return False
+        return "dose" in str(name).lower()
 
     def _get_attr(self, node, attr_name: str):
         if node is None or not hasattr(node, "GetAttribute"):
@@ -845,6 +744,29 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             item_id = sh_node.CreateItem(folder_item_id, node)
 
         sh_node.SetItemParent(item_id, folder_item_id)
+
+    def _apply_viridis_auto_wl(self, volume_node) -> None:
+        if slicer.mrmlScene is None or volume_node is None:
+            return
+
+        volume_node.CreateDefaultDisplayNodes()
+        disp = volume_node.GetDisplayNode()
+        if disp is None:
+            return
+
+        color_node = slicer.mrmlScene.GetFirstNodeByName("Viridis")
+        if color_node is None:
+            nodes = slicer.util.getNodesByClass("vtkMRMLColorTableNode")
+            nodes = list(nodes.values()) if isinstance(nodes, dict) else list(nodes)
+            for n in nodes:
+                if "viridis" in (n.GetName() or "").lower():
+                    color_node = n
+                    break
+
+        if color_node is not None:
+            disp.SetAndObserveColorNodeID(color_node.GetID())
+
+        disp.AutoWindowLevelOn()
 
     def _get_or_create_output_folder_item(self, reference_node, folder_name: str):
         """Return a SubjectHierarchy folder item under the same subject (patient) as reference_node."""
@@ -1250,7 +1172,6 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                 self._ensure_node_in_sh_folder(max_volume, j["folder_item_id"])
 
             try:
-                # Keep naming consistent with Phase 2/3 expectations: `uncertainty_{base}`.
                 uncertainty_volume = self._create_or_update_volume(
                     f"uncertainty_dose_{j['base_name']}", j["reference_volume"], std_arr, existing_node=None
                 )
@@ -1270,6 +1191,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     )
                     created_volume_names.append(dvf_mag_volume.GetName())
                     self._ensure_node_in_sh_folder(dvf_mag_volume, j["folder_item_id"])
+                    self._apply_viridis_auto_wl(dvf_mag_volume)
                 except Exception:
                     logger.exception("Failed to compute/export dvf magnitude volume")
             else:

@@ -1,4 +1,5 @@
 import logging
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -18,6 +19,36 @@ from widgets.metrics_widget import MetricsEvaluationWidget
 from widgets.prescription_widget import PrescriptionDoseEstimationWidget
 
 logger = logging.getLogger(__name__)
+
+
+class _PluginPathFilter(logging.Filter):
+    def __init__(self, root_path: Path):
+        super().__init__()
+        self._root = str(root_path).replace("\\", "/")
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        try:
+            path = (record.pathname or "").replace("\\", "/")
+            return path.startswith(self._root)
+        except Exception:
+            return False
+
+
+class _ImpactDoseAccHandler(logging.StreamHandler):
+    """Marker handler used to avoid installing duplicates."""
+
+
+def configure_plugin_logging(level: int = logging.INFO) -> None:
+    """Attach a local handler that only emits logs from this plugin's files."""
+    root = logging.getLogger()
+    for h in root.handlers:
+        if isinstance(h, _ImpactDoseAccHandler):
+            return
+    handler = _ImpactDoseAccHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.addFilter(_PluginPathFilter(Path(__file__).resolve().parent))
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"))
+    root.addHandler(handler)
 
 
 def compute_statistics_from_arrays(arrays: Iterable[np.ndarray], *, dtype=np.float32, mask: np.ndarray | None = None):
@@ -190,16 +221,6 @@ class ImpactDoseAccLogic(ScriptedLoadableModuleLogic):
             logger.exception("compute_dose_statistics failed")
             raise
 
-    def save_dose_to_dicom(
-        self, dose_volumes, output_path: str, series_number: int = 1, metadata: dict | None = None
-    ) -> str:
-        logger.warning("save_dose_to_dicom is not implemented; implement with pydicom/dcmqi")
-        raise NotImplementedError("Not implemented")
-
-    def load_dose_from_dicom(self, dicom_path: str):
-        logger.warning("load_dose_from_dicom is not implemented; implement with pydicom/dcmqi")
-        raise NotImplementedError("Not implemented")
-
 
 class ImpactDoseAccWidget(ScriptedLoadableModuleWidget):
     """Main UI widget; loads prescription, accumulation, and metrics widgets."""
@@ -210,6 +231,7 @@ class ImpactDoseAccWidget(ScriptedLoadableModuleWidget):
 
     def setup(self) -> None:
         super().setup()
+        configure_plugin_logging()
         self.tabWidget = QTabWidget()
         self.tabWidget.setMaximumWidth(800)
         self.tab_prescription = PrescriptionDoseEstimationWidget(self.logic)

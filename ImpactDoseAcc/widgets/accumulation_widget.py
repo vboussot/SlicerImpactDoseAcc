@@ -172,19 +172,12 @@ class DoseAccumulationWidget(BaseImpactWidget):
 
     def _is_fraction_proxy_name(self, name: str) -> bool:
         """Return True if a MRML node name corresponds to a Phase-1 dose_list output."""
-        try:
-            n = str(name or "")
-        except Exception:
-            logger.exception("_is_fraction_proxy_name invalid name")
-            return False
+        n = str(name or "")
         return n.startswith("dose_list_")
 
     def _base_name_from_dose_list(self, dose_list_name: str) -> str:
         """Extract base name from a dose_list_* node name."""
-        try:
-            s = str(dose_list_name or "")
-        except Exception:
-            return ""
+        s = str(dose_list_name or "")
         return s[len("dose_list_") :] if s.startswith("dose_list_") else ""
 
     def _has_uncertainty_for_any_proxy(self, proxies) -> bool:
@@ -686,13 +679,7 @@ class DoseAccumulationWidget(BaseImpactWidget):
                 base = self._base_name_from_dose_list(self._safe_node_name(dose_list_node))
                 if not base:
                     continue
-                dvf_node = None
-                try:
-                    dvf_node = slicer.mrmlScene.GetFirstNodeByName(f"dvf_magnitude_{base}")
-                except Exception:
-                    dvf_node = None
-                if dvf_node is None:
-                    continue
+                dvf_node = slicer.mrmlScene.GetFirstNodeByName(f"dvf_magnitude_{base}")
                 eval_map[("dvfmag", base)] = dvf_node
                 try:
                     if self._needs_resample_to_reference(dvf_node, ref):

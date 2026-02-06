@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -77,44 +78,28 @@ class DVHWidget(BaseImpactWidget):
             self.run_btn.clicked.connect(self._on_compute_dvh)
 
         # show_png_btn removed
-        try:
-            if self.seg_selector is not None:
-                self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
-        except Exception:
-            pass
-        try:
-            if self.dose_combo_a is not None:
-                self.dose_combo_a.currentIndexChanged.connect(self._on_dose_selection_changed)
-            if self.dose_combo_b is not None:
-                self.dose_combo_b.currentIndexChanged.connect(self._on_dose_selection_changed)
-        except Exception:
-            pass
+        if self.seg_selector is not None:
+            self.seg_selector.currentNodeChanged.connect(self._on_segmentation_changed)
 
-        # Defaults
-        try:
-            if self.cb_unc_a is not None:
-                self.cb_unc_a.setChecked(False)
-                self.cb_unc_a.setEnabled(False)
-            if self.cb_unc_b is not None:
-                self.cb_unc_b.setChecked(False)
-                self.cb_unc_b.setEnabled(False)
-        except Exception:
-            pass
-        # show_png_btn removed
+        if self.dose_combo_a is not None:
+            self.dose_combo_a.currentIndexChanged.connect(self._on_dose_selection_changed)
+        if self.dose_combo_b is not None:
+            self.dose_combo_b.currentIndexChanged.connect(self._on_dose_selection_changed)
+
+        if self.cb_unc_a is not None:
+            self.cb_unc_a.setChecked(False)
+            self.cb_unc_a.setEnabled(False)
+        if self.cb_unc_b is not None:
+            self.cb_unc_b.setChecked(False)
+            self.cb_unc_b.setEnabled(False)
 
         if self.output_name_edit is not None:
-            try:
-                self.output_name_edit.setText(self._generate_default_output_name(prefix="dvh"))
-            except Exception:
-                pass
+            self.output_name_edit.setText(self._generate_default_output_name(prefix="dvh"))
 
         if self.progress_bar is not None:
-            try:
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(0)
-                self.progress_bar.setVisible(False)
-            except Exception:
-                pass
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
 
         # Embedded plot widget configuration
         if self.plot_widget is not None:
@@ -239,64 +224,44 @@ class DVHWidget(BaseImpactWidget):
 
         structure_items: list of dicts with keys: name, color(rgb01)
         """
-        try:
-            structure_lines = []
-            for it in structure_items or []:
-                name = str(it.get("name", ""))
-                hexcol = self._rgb01_to_hex(it.get("color", (0, 0, 0)))
-                structure_lines.append(
-                    f"<div><span style='color:{hexcol}; font-weight:600;'>━━━━</span>&nbsp;{name}</div>"
-                )
+        structure_lines = []
+        for it in structure_items or []:
+            name = str(it.get("name", ""))
+            hexcol = self._rgb01_to_hex(it.get("color", (0, 0, 0)))
+            structure_lines.append(f"<div><span style='color:{hexcol}; font-weight:600;'>━━━━</span>&nbsp;{name}</div>")
 
-            styles = (
-                "<div style='margin-top:6px;'>"
-                "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Dose ref </div>"
-                "<div><span style='color:#000; font-weight:600;'>- - - -</span>&nbsp;Dose estimated </div>"
-                "</div>"
-            )
+        styles = (
+            "<div style='margin-top:6px;'>"
+            "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Dose ref </div>"
+            "<div><span style='color:#000; font-weight:600;'>- - - -</span>&nbsp;Dose estimated </div>"
+            "</div>"
+        )
 
-            ci = (
-                "<div style='margin-top:6px;'>"
-                "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Uncertainty (±3σ)</div>"
-                "</div>"
-            )
+        ci = (
+            "<div style='margin-top:6px;'>"
+            "<div><span style='color:#000; font-weight:600;'>━━━━</span>&nbsp;Uncertainty (±3σ)</div>"
+            "</div>"
+        )
 
-            html = "<div>"
-            if structure_lines:
-                html += "<div><b>Structures</b></div>" + "".join(structure_lines)
-            html += styles + ci + "</div>"
+        html = "<div>"
+        if structure_lines:
+            html += "<div><b>Structures</b></div>" + "".join(structure_lines)
+        html += styles + ci + "</div>"
 
-            self.legend_label.setText(html)
-        except Exception:
-            pass
+        self.legend_label.setText(html)
 
     def _set_ui_busy(self, busy: bool) -> None:
         # Use base implementation for generic behavior, then apply widget-specific enables.
         super()._set_ui_busy(busy)
-        try:
-            self.run_btn.setEnabled(not bool(busy))
-        except Exception:
-            logger.exception("Failed to set run_btn enabled state")
-        try:
-            self.dose_combo_a.setEnabled(not bool(busy))
-            self.dose_combo_b.setEnabled(not bool(busy))
-        except Exception:
-            logger.exception("Failed to set dose combo enabled state")
-        try:
-            self.seg_selector.setEnabled(not bool(busy))
-        except Exception:
-            logger.exception("Failed to set seg_selector enabled state")
-        try:
-            self.output_name_edit.setEnabled(not bool(busy))
-        except Exception:
-            logger.exception("Failed to set output_name_edit enabled state")
-        # Uncertainty checkboxes: always disable while running; restore eligibility after.
+        self.run_btn.setEnabled(not bool(busy))
+        self.dose_combo_a.setEnabled(not bool(busy))
+        self.dose_combo_b.setEnabled(not bool(busy))
+        self.seg_selector.setEnabled(not bool(busy))
+        self.output_name_edit.setEnabled(not bool(busy))
+
         if bool(busy):
-            try:
-                self.cb_unc_a.setEnabled(False)
-                self.cb_unc_b.setEnabled(False)
-            except Exception:
-                logger.exception("Failed to disable uncertainty checkboxes")
+            self.cb_unc_a.setEnabled(False)
+            self.cb_unc_b.setEnabled(False)
         else:
             try:
                 self._on_dose_selection_changed()
@@ -405,10 +370,7 @@ class DVHWidget(BaseImpactWidget):
         self._clear_layout(self._segments_scroll_layout)
 
         if seg_node is None:
-            try:
-                self._segments_group.setEnabled(False)
-            except Exception:
-                pass
+            self._segments_group.setEnabled(False)
             return
 
         try:
@@ -416,16 +378,10 @@ class DVHWidget(BaseImpactWidget):
         except Exception:
             seg = None
         if seg is None:
-            try:
-                self._segments_group.setEnabled(False)
-            except Exception:
-                pass
+            self._segments_group.setEnabled(False)
             return
 
-        try:
-            self._segments_group.setEnabled(True)
-        except Exception:
-            pass
+        self._segments_group.setEnabled(True)
 
         try:
             n = int(seg.GetNumberOfSegments())
@@ -525,18 +481,13 @@ class DVHWidget(BaseImpactWidget):
         unc_a = self._find_uncertainty_in_same_folder(dose_a)
         unc_b = self._find_uncertainty_in_same_folder(dose_b)
 
-        try:
-            self.cb_unc_a.setEnabled(bool(unc_a is not None))
-            if unc_a is None:
-                self.cb_unc_a.setChecked(False)
-        except Exception:
-            pass
-        try:
-            self.cb_unc_b.setEnabled(bool(unc_b is not None))
-            if unc_b is None:
-                self.cb_unc_b.setChecked(False)
-        except Exception:
-            pass
+        self.cb_unc_a.setEnabled(bool(unc_a is not None))
+        if unc_a is None:
+            self.cb_unc_a.setChecked(False)
+
+        self.cb_unc_b.setEnabled(bool(unc_b is not None))
+        if unc_b is None:
+            self.cb_unc_b.setChecked(False)
 
     def _auto_bin_width_gy(self, max_dose_gy: float) -> float:
         # Minimal & robust: use 1 Gy bins.
@@ -1072,18 +1023,16 @@ class DVHWidget(BaseImpactWidget):
             def _render_matplotlib_png():
                 try:
                     import matplotlib
-
-                    matplotlib.use("Agg")
-                    try:
-                        matplotlib.set_loglevel("warning")
-                    except Exception:
-                        pass
-                    import tempfile
-
-                    import matplotlib.pyplot as plt
                 except Exception:
-                    logger.exception("Matplotlib is not available; skipping PNG export")
-                    return None
+                    logger.exception("Matplotlib is not downloaded; download it to enable DVH plotting")
+                    slicer.util.pip_install("matplotlib")
+                    import matplotlib
+
+                matplotlib.use("Agg")
+                matplotlib.set_loglevel("warning")
+                import tempfile
+
+                import matplotlib.pyplot as plt
 
                 xs = np.asarray(centers2, dtype=np.float32)
                 if xs.size == 0:
@@ -1100,7 +1049,7 @@ class DVHWidget(BaseImpactWidget):
                 ax.set_ylabel("Volume (%)")
                 ax.grid(True, alpha=0.25, color="#cfd3dc", linewidth=0.8)
 
-                grouped = {}
+                grouped: dict[tuple[str, str], dict[str, Any]] = {}
                 for c in curves:
                     key = (c.get("dose_label", ""), c.get("seg_id", ""))
                     try:

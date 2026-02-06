@@ -14,7 +14,7 @@
         <item>
          <widget class="QLabel" name="header_label">
           <property name="text">
-           <string>Select inputs for Phase 3 metrics:</string>
+           <string>Select inputs:</string>
           </property>
          </widget>
         </item>

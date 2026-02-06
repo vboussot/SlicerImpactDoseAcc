@@ -193,10 +193,7 @@ class BaseImpactWidget(QWidget):
 
     def _set_ui_busy(self, busy: bool) -> None:
         target = getattr(self, "_root_widget", None) or self
-        try:
-            target.setEnabled(not bool(busy))
-        except Exception:
-            logger.exception("_set_ui_busy failed")
+        target.setEnabled(not bool(busy))
 
     def _generate_default_output_name(self, prefix: str) -> str:
         return f"{prefix}_{uuid4().hex[:2]}"
