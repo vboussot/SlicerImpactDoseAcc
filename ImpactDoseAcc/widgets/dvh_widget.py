@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import shutil
 from typing import Any
 from uuid import uuid4
 
@@ -405,6 +406,12 @@ class DVHWidget(BaseImpactWidget):
         j = self._active_job
         if j is None:
             return
+        tmp_dir = j.get("_png_temp_dir")
+        if tmp_dir:
+            try:
+                shutil.rmtree(str(tmp_dir), ignore_errors=True)
+            except Exception:
+                pass
         for tn in j.get("temp_nodes", []):
             if tn is None or slicer.mrmlScene is None:
                 continue
@@ -714,8 +721,11 @@ class DVHWidget(BaseImpactWidget):
             logger.exception("Failed to render matplotlib figure")
             return None
         try:
-            out_name = f"{self._dvh_safe_png_name(table_name)}.png"
-            out_path = os.path.join(tempfile.gettempdir(), out_name)
+            tmp_dir = tempfile.mkdtemp(prefix="slicer_dvh_")
+            if self._active_job is not None:
+                self._active_job["_png_temp_dir"] = tmp_dir
+            out_name = "dvh_plot.png"
+            out_path = os.path.join(tmp_dir, out_name)
             with open(out_path, "wb") as f:
                 f.write(buf.getvalue())
             return out_path
