@@ -1,5 +1,7 @@
 import logging
 import os
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 from uuid import uuid4
 
@@ -29,10 +31,14 @@ class DvfSelectorRow(QWidget):
     Supports native TransformNodes and transform sequences.
     """
 
-    def __init__(self, on_add=None, on_remove=None):
+    def __init__(
+        self,
+        on_add: Callable[[], None] | None = None,
+        on_remove: Callable[["DvfSelectorRow"], None] | None = None,
+    ) -> None:
         super().__init__()
-        self._dvf_node = None
-        self._dvf_node_map = {}
+        self._dvf_node: Any | None = None
+        self._dvf_node_map: dict[int, tuple[Any | None, str | None]] = {}
         self._on_add = on_add
         self._on_remove = on_remove
         self._setup_ui()
@@ -61,23 +67,21 @@ class DvfSelectorRow(QWidget):
         self._populate_dvf_options()
 
     def _on_add_clicked(self) -> None:
-        try:
-            if callable(self._on_add):
-                self._on_add()
-        except Exception:
-            pass
+        if callable(self._on_add):
+            self._on_add()
 
     def _on_remove_clicked(self) -> None:
-        if not callable(self._on_remove):
+        handler = self._on_remove
+        if not callable(handler):
             return
         try:
 
             def _do_remove():
-                self._on_remove(self)
+                handler(self)
 
             QTimer.singleShot(0, _do_remove)
         except Exception:
-            self._on_remove(self)
+            handler(self)
 
     def _populate_dvf_options(self) -> None:
         self.dvf_combo.clear()
@@ -89,10 +93,7 @@ class DvfSelectorRow(QWidget):
             return
 
         def _safe_name(node) -> str:
-            try:
-                return node.GetName()
-            except Exception:
-                return ""
+            return node.GetName()
 
         def _is_internal_slice_transform_name(name: str) -> bool:
             n = str(name).strip().lower()
@@ -118,10 +119,7 @@ class DvfSelectorRow(QWidget):
         # Transform sequences
         sequence_nodes = slicer.util.getNodes("vtkMRMLSequenceNode*")
         for node_name, node in sequence_nodes.items():
-            try:
-                data_class = node.GetDataNodeClassName()
-            except Exception:
-                continue
+            data_class = node.GetDataNodeClassName()
             if not data_class or "TransformNode" not in str(data_class):
                 continue
             self.dvf_combo.addItem(f"Transform Seq: {node_name}")
@@ -138,15 +136,12 @@ class DvfSelectorRow(QWidget):
         else:
             self._dvf_node = None
 
-    def get_dvf_node(self):
+    def get_dvf_node(self) -> Any | None:
         return self._dvf_node
 
-    def get_dvf_type(self):
+    def get_dvf_type(self) -> str | None:
         idx_attr = getattr(self.dvf_combo, "currentIndex", 0)
-        try:
-            current_index = idx_attr() if callable(idx_attr) else int(idx_attr)
-        except Exception:
-            current_index = 0
+        current_index = idx_attr() if callable(idx_attr) else int(idx_attr)
         dvf_data = self._dvf_node_map.get(current_index)
         if dvf_data:
             _, dvf_type = dvf_data
@@ -160,11 +155,16 @@ class DoseSelectorRow(QWidget):
     Multiple rows can be added to select multiple doses.
     """
 
-    def __init__(self, is_rtdose_cb, on_add=None, on_remove=None):
+    def __init__(
+        self,
+        is_rtdose_cb: Callable[[Any], bool],
+        on_add: Callable[[], None] | None = None,
+        on_remove: Callable[["DoseSelectorRow"], None] | None = None,
+    ) -> None:
         super().__init__()
         self._is_rtdose = is_rtdose_cb
-        self._dose_node = None
-        self._dose_node_map = {}
+        self._dose_node: Any | None = None
+        self._dose_node_map: dict[int, Any | None] = {}
         self._on_add = on_add
         self._on_remove = on_remove
         self._setup_ui()
@@ -193,27 +193,21 @@ class DoseSelectorRow(QWidget):
         self.refresh_options()
 
     def _on_add_clicked(self) -> None:
-        try:
-            if callable(self._on_add):
-                self._on_add()
-        except Exception:
-            pass
+        if callable(self._on_add):
+            self._on_add()
 
     def _on_remove_clicked(self) -> None:
-        # Avoid deleting Qt objects in the middle of the clicked() callback.
+        handler = self._on_remove
+        if not callable(handler):
+            return
         try:
-            if not callable(self._on_remove):
-                return
-            try:
 
-                def _do_remove():
-                    self._on_remove(self)
+            def _do_remove():
+                handler(self)
 
-                QTimer.singleShot(0, _do_remove)
-            except Exception:
-                self._on_remove(self)
+            QTimer.singleShot(0, _do_remove)
         except Exception:
-            pass
+            handler(self)
 
     def refresh_options(self) -> None:
         self.dose_combo.clear()
@@ -231,11 +225,9 @@ class DoseSelectorRow(QWidget):
 
             if "uncertainty" in name_l or "dvf_magnitude" in name_l:
                 continue
-            try:
-                if not self._is_rtdose(node):
-                    continue
-            except Exception:
+            if not self._is_rtdose(node):
                 continue
+
             self.dose_combo.addItem(node_name)
             self._dose_node_map[combo_index] = node
             combo_index += 1
@@ -252,28 +244,29 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
     def __init__(
         self,
-        export_callback=None,
-        browse_export_dir_callback=None,
-        import_callback=None,
-        deform_callback=None,
-        refresh_sessions_callback=None,
-    ):
+        export_callback: Callable[[], None] | None = None,
+        browse_export_dir_callback: Callable[[], None] | None = None,
+        import_callback: Callable[[], None] | None = None,
+        deform_callback: Callable[[], None] | None = None,
+        refresh_sessions_callback: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__()
         # create a logger for this widget
         self._logger = logging.getLogger(self.__class__.__name__)
-        self._session_widgets = []
-        self._dose_widgets = []
+        self._session_widgets: list[DvfSelectorRow] = []
+        self._dose_widgets: list[DoseSelectorRow] = []
         self.export_dir = ""
-        self._sct_node_map = {}
-        self._ref_ct_node_map = {}
+        self._sct_node_map: dict[str, Any] = {}
+        self._ref_ct_node_map: dict[int, Any | None] = {}
+        self._viridis_color_node_id: str | None = None
         self.ref_ct_combo: QComboBox
-        self.output_name_edit = None
-        self.sct_checkboxes = []
-        self._active_job = None
-        self.status_label = None
-        self.progress_bar = None
-        self.export_btn = None
-        self.browse_export_btn = None
+        self.output_name_edit: Any | None = None
+        self.sct_checkboxes: list[QCheckBox] = []
+        self._active_job: dict[str, Any] | None = None
+        self.status_label: Any | None = None
+        self.progress_bar: Any | None = None
+        self.export_btn: Any | None = None
+        self.browse_export_btn: Any | None = None
         # Store callbacks as instance attributes so methods can access them
         self._export_callback = export_callback
         self._browse_export_dir_callback = browse_export_dir_callback
@@ -282,15 +275,19 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         self._refresh_sessions_callback = refresh_sessions_callback
         self._setup_ui()
 
-    def _remove_row(self, row_list: list, row_widget, layout, reset_combo=None):
+    def _remove_row(
+        self,
+        row_list: list[QWidget],
+        row_widget: QWidget,
+        layout: Any | None,
+        reset_combo: Callable[[QWidget], None] | None = None,
+    ) -> None:
         if row_widget not in row_list:
             return
         if len(row_list) <= 1:
             if callable(reset_combo):
-                try:
-                    reset_combo(row_widget)
-                except Exception:
-                    pass
+                reset_combo(row_widget)
+
             return
         row_list.remove(row_widget)
         if layout is not None:
@@ -394,14 +391,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             self._set_progress(0, visible=False)
             self._set_status("")
             if message:
-                try:
-                    QMessageBox.warning(self, "Compute Error", str(message))
-                except Exception:
-                    pass
-
-    def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
-        """Delegate to base implementation which centralizes CLI handling."""
-        return super()._run_cli_async(cli_module, params, on_done, on_error)
+                QMessageBox.warning(self, "Compute Error", str(message))
 
     def _add_session_selector(self) -> None:
         row_widget = DvfSelectorRow(on_add=self._add_session_selector, on_remove=self._remove_session_selector)
@@ -437,15 +427,12 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         self._populate_reference_ct_combo()
         self._update_sct_list()
 
-    def _populate_reference_ct_combo(self):
+    def _populate_reference_ct_combo(self) -> None:
         previous_node_id = None
         current_index = self._combo_current_index(self.ref_ct_combo)
         previous_node = self._ref_ct_node_map.get(current_index)
         if previous_node is not None and hasattr(previous_node, "GetID"):
-            try:
-                previous_node_id = previous_node.GetID()
-            except Exception:
-                previous_node_id = None
+            previous_node_id = previous_node.GetID()
 
         self.ref_ct_combo.clear()
         self._ref_ct_node_map.clear()
@@ -462,10 +449,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             node_name, node = kv
             in_sh = 0
             if sh_node is not None:
-                try:
-                    in_sh = 0 if sh_node.GetItemByDataNode(node) > 0 else 1
-                except Exception:
-                    in_sh = 1
+                in_sh = 0 if sh_node.GetItemByDataNode(node) > 0 else 1
             return (in_sh, node_name.lower())
 
         combo_index = 1
@@ -479,14 +463,11 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         if previous_node_id:
             for idx, node in self._ref_ct_node_map.items():
                 if node is not None and hasattr(node, "GetID"):
-                    try:
-                        if node.GetID() == previous_node_id:
-                            self.ref_ct_combo.setCurrentIndex(idx)
-                            break
-                    except Exception:
-                        continue
+                    if node.GetID() == previous_node_id:
+                        self.ref_ct_combo.setCurrentIndex(idx)
+                        break
 
-    def _update_sct_list(self):
+    def _update_sct_list(self) -> None:
         for checkbox in self.sct_checkboxes:
             checkbox.deleteLater()
         self.sct_checkboxes = []
@@ -500,19 +481,22 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             return not self._name_contains_dose(name)
 
         for node_name, node in volume_nodes.items():
-            name_l = str(node_name or "").lower()
+            node_name_s = str(node_name or "")
+            node_name_l = node_name_s.lower()
+            safe_name = self._safe_node_name(node) if node is not None else ""
+            safe_name_l = safe_name.lower()
             if (
-                "gamma" in name_l
-                or (not _is_export_candidate_name(node_name))
-                or (node is not None and (not _is_export_candidate_name(self._safe_node_name(node))))
+                "gamma" in node_name_l
+                or (not _is_export_candidate_name(node_name_s))
+                or (safe_name_l and (not _is_export_candidate_name(safe_name)))
             ):
                 continue
             if self._is_dicom_volume(node):
                 continue
 
-            checkbox = QCheckBox(f"Volume: {node_name}")
+            checkbox = QCheckBox(f"Volume: {node_name_s}")
             checkbox.setChecked(False)
-            node_id = f"vol_{node_name}"
+            node_id = f"vol_{node_name_s}"
             checkbox.setProperty("node_id", node_id)
             checkbox.setProperty("node_type", "volume")
             self.sct_checkboxes.append(checkbox)
@@ -521,8 +505,10 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
         # sequences
         for node_name, node in sequence_nodes.items():
-            if (not _is_export_candidate_name(node_name)) or (
-                node is not None and (not _is_export_candidate_name(self._safe_node_name(node)))
+            node_name_s = str(node_name or "")
+            safe_name = self._safe_node_name(node) if node is not None else ""
+            if (not _is_export_candidate_name(node_name_s)) or (
+                safe_name and (not _is_export_candidate_name(safe_name))
             ):
                 continue
             # Only list sequences of scalar volumes (exclude transform sequences, etc.)
@@ -533,10 +519,8 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             # Determine sequence length via explicit attribute checks
             num_items = 0
             if hasattr(node, "GetNumberOfDataNodes"):
-                try:
-                    num_items = node.GetNumberOfDataNodes()
-                except Exception:
-                    num_items = 0
+                num_items = node.GetNumberOfDataNodes()
+
             elif hasattr(node, "GetSequenceAsNode"):
                 idx = 0
                 while True:
@@ -549,9 +533,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                 num_items = 0
 
             if num_items > 0:
-                checkbox = QCheckBox(f"Sequence: {node_name} ({num_items} frames)")
+                checkbox = QCheckBox(f"Sequence: {node_name_s} ({num_items} frames)")
                 checkbox.setChecked(False)
-                node_id = f"seq_{node_name}"
+                node_id = f"seq_{node_name_s}"
                 checkbox.setProperty("node_id", node_id)
                 checkbox.setProperty("node_type", "sequence")
                 self.sct_checkboxes.append(checkbox)
@@ -564,7 +548,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         for session_widget in self._session_widgets:
             session_widget._populate_dvf_options()
 
-    def _on_browse_export_dir(self):
+    def _on_browse_export_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(None, "Select folder to export dose sessions")
         if directory:
             self.export_dir = directory
@@ -572,7 +556,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             self.export_dir_display.setText(display_path)
             self.export_dir_display.setStyleSheet("color: black;")
 
-    def _expand_sequence_nodes(self, node, temp_nodes: list):
+    def _expand_sequence_nodes(self, node: Any, temp_nodes: list[Any]) -> list[Any]:
         if node is None:
             return []
         if isinstance(node, slicer.vtkMRMLSequenceNode):
@@ -587,7 +571,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             return expanded
         return [node]
 
-    def _create_or_update_volume(self, name: str, reference_node, array, existing_node=None):
+    def _create_or_update_volume(
+        self, name: str, reference_node: Any, array: np.ndarray, existing_node: Any | None = None
+    ) -> Any:
         if reference_node is None:
             raise ValueError("Reference node is required to create output volumes")
         target_node = existing_node if existing_node is not None else slicer.mrmlScene.GetFirstNodeByName(name)
@@ -601,7 +587,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         slicer.util.arrayFromVolumeModified(target_node)
         return target_node
 
-    def _displacement_array_from_transform(self, transform_node, reference_volume_node, temp_nodes: list):
+    def _displacement_array_from_transform(
+        self, transform_node: Any, reference_volume_node: Any, temp_nodes: list[Any]
+    ) -> np.ndarray | None:
         """Return displacement field as a numpy array sampled on reference_volume_node grid.
 
         Output array is expected shape (k, j, i, 3) in physical units (typically mm).
@@ -622,19 +610,11 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             before_ids = set()
 
         disp_node = None
-        try:
-            disp_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode", f"dvf_disp_tmp_{uuid4().hex[:6]}")
-            temp_nodes.append(disp_node)
-            # Avoid UI/render pipeline churn for temp nodes.
-            try:
-                disp_node.SetHideFromEditors(1)
-                disp_node.SetSelectable(0)
-                disp_node.SetSaveWithScene(0)
-            except Exception:
-                pass
-        except Exception:
-            disp_node = None
-
+        disp_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode", f"dvf_disp_tmp_{uuid4().hex[:6]}")
+        temp_nodes.append(disp_node)
+        disp_node.SetHideFromEditors(1)
+        disp_node.SetSelectable(0)
+        disp_node.SetSaveWithScene(0)
         if disp_node is None:
             return None
 
@@ -685,39 +665,33 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
     def _name_contains_dose(self, name: str) -> bool:
         return "dose" in str(name).lower()
 
-    def _get_attr(self, node, attr_name: str):
+    def _get_attr(self, node: Any, attr_name: str) -> str | None:
         if node is None or not hasattr(node, "GetAttribute"):
             return None
-        try:
-            return node.GetAttribute(attr_name)
-        except Exception:
-            return None
+        return node.GetAttribute(attr_name)
 
-    def _is_truthy_attr(self, val) -> bool:
+    def _is_truthy_attr(self, val: Any) -> bool:
         if val is None:
             return False
         s = str(val).strip().lower()
         return s not in ("", "0", "false", "no", "none")
 
-    def _is_rtdose(self, node) -> bool:
+    def _is_rtdose(self, node: Any) -> bool:
         return self._is_truthy_attr(self._get_attr(node, "DicomRtImport.DoseVolume"))
 
-    def _is_dicom(self, node) -> bool:
+    def _is_dicom(self, node: Any) -> bool:
         return (
             bool(self._get_attr(node, "DICOM.instanceUIDs"))
             or bool(self._get_attr(node, "DICOM.SeriesInstanceUID"))
             or bool(self._get_attr(node, "DICOM.StudyInstanceUID"))
         )
 
-    def _is_dicom_volume(self, node) -> bool:
+    def _is_dicom_volume(self, node: Any) -> bool:
         return self._is_rtdose(node) or self._is_dicom(node)
 
     def _safe_path_component(self, text: str, fallback: str = "item") -> str:
         """Sanitize a string for use as a directory name."""
-        try:
-            s = str(text or "").strip()
-        except Exception:
-            s = ""
+        s = str(text or "").strip()
         if not s:
             s = fallback
         cleaned = []
@@ -729,7 +703,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         out = "".join(cleaned).strip("._")
         return out or fallback
 
-    def _ensure_node_in_sh_folder(self, node, folder_item_id):
+    def _ensure_node_in_sh_folder(self, node: Any, folder_item_id: int | None) -> None:
         """Ensure node has an SH item and is parented under folder_item_id."""
         if slicer.mrmlScene is None or node is None or not folder_item_id:
             return
@@ -753,7 +727,13 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         if disp is None:
             return
 
-        color_node = slicer.mrmlScene.GetFirstNodeByName("Viridis")
+        color_node = None
+        cached_id = getattr(self, "_viridis_color_node_id", None)
+        if cached_id:
+            color_node = slicer.mrmlScene.GetNodeByID(cached_id)
+
+        if color_node is None:
+            color_node = slicer.mrmlScene.GetFirstNodeByName("Viridis")
         if color_node is None:
             nodes = slicer.util.getNodesByClass("vtkMRMLColorTableNode")
             nodes = list(nodes.values()) if isinstance(nodes, dict) else list(nodes)
@@ -762,12 +742,15 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                     color_node = n
                     break
 
+        if color_node is not None and hasattr(color_node, "GetID"):
+            self._viridis_color_node_id = color_node.GetID()
+
         if color_node is not None:
             disp.SetAndObserveColorNodeID(color_node.GetID())
 
         disp.AutoWindowLevelOn()
 
-    def _get_or_create_output_folder_item(self, reference_node, folder_name: str):
+    def _get_or_create_output_folder_item(self, reference_node: Any, folder_name: str) -> int | None:
         """Return a SubjectHierarchy folder item under the same subject (patient) as reference_node."""
         if slicer.mrmlScene is None or reference_node is None:
             return None
@@ -791,7 +774,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
 
         return sh_node.CreateFolderItem(parent_item_id, folder_name)
 
-    def _get_subject_item_id_from_sh(self, sh_node, item_id: int):
+    def _get_subject_item_id_from_sh(self, sh_node: Any, item_id: int) -> int:
         """Climb SH parents until we reach the Patient (subject) item.
 
         Fallback: returns the immediate parent if Patient level cannot be detected.
@@ -802,24 +785,17 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         last_parent = 0
         for _ in range(20):
             level = ""
-            try:
-                level = sh_node.GetItemLevel(current)
-            except Exception:
-                level = ""
+            level = sh_node.GetItemLevel(current)
             if str(level).lower() == "patient":
                 return current
-            parent = 0
-            try:
-                parent = sh_node.GetItemParent(current)
-            except Exception:
-                parent = 0
+            parent = sh_node.GetItemParent(current)
             if not parent:
                 break
             last_parent = parent
             current = parent
         return last_parent
 
-    def _build_selector_row(self, label_text: str, selector_widget, checkbox: QCheckBox = None) -> QHBoxLayout:
+    def _build_selector_row(self, label_text: str, selector_widget: QWidget, checkbox: QCheckBox = None) -> QHBoxLayout:
         row = QHBoxLayout()
         row.addWidget(QLabel(label_text))
         row.addWidget(selector_widget, 1)
@@ -827,7 +803,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             row.addWidget(checkbox)
         return row
 
-    def _create_volume_selector(self, none_display: str):
+    def _create_volume_selector(self, none_display: str) -> Any:
         selector = slicer.qMRMLNodeComboBox()
         selector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
         selector.showChildNodeTypes = False
@@ -842,36 +818,18 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         selector.setToolTip("Select an existing volume to overwrite or leave empty to create a new one on run")
         return selector
 
-    def _create_sequence_selector(self, none_display: str):
-        selector = slicer.qMRMLNodeComboBox()
-        selector.nodeTypes = ["vtkMRMLSequenceNode"]
-        selector.showChildNodeTypes = False
-        selector.noneEnabled = True
-        selector.addEnabled = True
-        selector.removeEnabled = True
-        selector.editEnabled = True
-        selector.renameEnabled = True
-        selector.noneDisplay = none_display
-        if slicer.mrmlScene:
-            selector.setMRMLScene(slicer.mrmlScene)
-        selector.setToolTip("Select an existing sequence to overwrite or leave empty to create a new one on run")
-        return selector
-
-    def _create_export_checkbox(self):
+    def _create_export_checkbox(self) -> QCheckBox:
         checkbox = QCheckBox("Export")
         checkbox.setChecked(True)
         checkbox.setToolTip("Unchecked to skip exporting this volume to the scene")
         return checkbox
 
-    def _get_sequence_length(self, sequence_node) -> int:
+    def _get_sequence_length(self, sequence_node: Any) -> int:
         """Return the number of frames in a sequence node."""
         if sequence_node is None:
             return 0
         if hasattr(sequence_node, "GetNumberOfDataNodes"):
-            try:
-                return sequence_node.GetNumberOfDataNodes()
-            except Exception:
-                return 0
+            return sequence_node.GetNumberOfDataNodes()
         if hasattr(sequence_node, "GetSequenceAsNode"):
             count = 0
             idx = 0
@@ -884,7 +842,7 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             return count
         return 0
 
-    def _extract_ref_ct_metadata(self, ref_ct_node) -> dict:
+    def _extract_ref_ct_metadata(self, ref_ct_node: Any) -> dict[str, Any]:
         md: dict[str, Any] = {}
 
         instance_uids_raw = ref_ct_node.GetAttribute("DICOM.instanceUIDs")
@@ -906,16 +864,13 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             for out_key, dicom_tag in tag_map.items():
                 if md.get(out_key):
                     continue
-                try:
-                    val = dicom_db.instanceValue(instance_uid, dicom_tag)
-                except Exception:
-                    val = None
+                val = dicom_db.instanceValue(instance_uid, dicom_tag)
                 if val:
                     md[out_key] = val
         return md
 
     def _configure_export_tags(
-        self, exp, directory: str, metadata: dict, series_number: int, series_description: str
+        self, exp: Any, directory: str, metadata: dict[str, Any], series_number: int, series_description: str
     ) -> None:
         exp.directory = directory
         for key, val in metadata.items():
@@ -940,12 +895,9 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
         exp.setTag("SeriesNumber", str(series_number))
         exp.setTag("SeriesDescription", series_description)
 
-    def _on_export_sct(self):
+    def _on_export_sct(self) -> None:
         if self._active_job is not None:
-            try:
-                QMessageBox.information(self, "Busy", "A computation is already running.")
-            except Exception:
-                pass
+            QMessageBox.information(self, "Busy", "A computation is already running.")
             return
         current_index = self._combo_current_index(self.ref_ct_combo)
         ref_ct_node = self._ref_ct_node_map.get(current_index)
@@ -988,21 +940,13 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             self._set_ui_busy(False)
             self._set_status("")
 
-    def _on_deform_and_compute(self):
+    def _on_deform_and_compute(self) -> None:
         if self._active_job is not None:
             QMessageBox.information(self, "Busy", "A computation is already running.")
             return
 
-        prev_warn = None
-        try:
-            prev_warn = vtk.vtkObject.GetGlobalWarningDisplay()
-            vtk.vtkObject.SetGlobalWarningDisplay(0)
-        except Exception:
-            prev_warn = None
-
         output_name_val = self._line_edit_text(self.output_name_edit)
-
-        base_name = output_name_val.strip()
+        base_name = output_name_val.strip() or f"session_{uuid4().hex[:6]}"
 
         selected_doses = []
         for dose_widget in self._dose_widgets:
@@ -1030,7 +974,35 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             QMessageBox.warning(self, "Missing Inputs", "Select at least one DVF before computing deformations.")
             return
 
-        job = {
+        job = self._build_job(base_name, selected_doses, dvf_samples, reference_volume, folder_item_id)
+        self._build_tasks(job)
+
+        if not job["tasks"]:
+            QMessageBox.warning(self, "No Valid Inputs", "No DVF frames available to compute deformations.")
+            return
+
+        prev_warn = None
+        prev_warn = vtk.vtkObject.GetGlobalWarningDisplay()
+        vtk.vtkObject.SetGlobalWarningDisplay(0)
+
+        job["vtk_warn_prev"] = prev_warn
+
+        self._active_job = job
+        self._set_ui_busy(True)
+        self._set_status("Computing deformed dose samples...")
+        self._set_progress(0, visible=True)
+
+        self._schedule_tick()
+
+    def _build_job(
+        self,
+        base_name: str,
+        selected_doses: list[Any],
+        dvf_samples: list[tuple[int, Any, Any]],
+        reference_volume: Any,
+        folder_item_id: int | None,
+    ) -> dict[str, Any]:
+        return {
             "base_name": base_name,
             "selected_doses": list(selected_doses),
             "dvf_samples": list(dvf_samples),
@@ -1047,22 +1019,29 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             "n_samples": 0,
             "sum_arr": None,
             "sumsq_arr": None,
+            "tmp_arr": None,
             "min_arr": None,
             "max_arr": None,
-            "vtk_warn_prev": prev_warn,
+            "vtk_warn_prev": None,
         }
 
-        # Build a sequential task list (dose x DVF x frame).
+    def _build_tasks(self, job: dict[str, Any]) -> None:
+        selected_doses = job.get("selected_doses", [])
+        dvf_samples = job.get("dvf_samples", [])
+        dvf_nodes_by_sample: list[tuple[int, list[Any]]] = []
+        for dvf_idx, dvf_node, dvf_type in dvf_samples:
+            dvf_nodes = (
+                self._expand_sequence_nodes(dvf_node, job["temp_nodes"])
+                if dvf_type == "transform-sequence"
+                else [dvf_node]
+            )
+            if not dvf_nodes:
+                logger.warning(f"DVF {dvf_idx}: No DVF available")
+                continue
+            dvf_nodes_by_sample.append((int(dvf_idx), list(dvf_nodes)))
+
         for dose_idx, base_dose in enumerate(selected_doses, start=1):
-            for dvf_idx, dvf_node, dvf_type in dvf_samples:
-                dvf_nodes = (
-                    self._expand_sequence_nodes(dvf_node, job["temp_nodes"])
-                    if dvf_type == "transform-sequence"
-                    else [dvf_node]
-                )
-                if not dvf_nodes:
-                    logger.warning(f"DVF {dvf_idx}: No DVF available")
-                    continue
+            for dvf_idx, dvf_nodes in dvf_nodes_by_sample:
                 for frame_idx, dvf_to_use in enumerate(dvf_nodes):
                     job["tasks"].append(
                         {
@@ -1074,301 +1053,257 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
                         }
                     )
 
-        if not job["tasks"]:
-            QMessageBox.warning(self, "No Valid Inputs", "No DVF frames available to compute deformations.")
+    def _schedule_tick(self) -> None:
+        try:
+            QTimer.singleShot(0, self._tick_job)
+        except Exception:
+            self._tick_job()
+
+    def _cleanup_job(self) -> None:
+        j = self._active_job
+        if j is None:
+            return
+        for node in list(j.get("temp_nodes", [])):
+            if node is not None and slicer.mrmlScene is not None and node.GetScene() == slicer.mrmlScene:
+                slicer.mrmlScene.RemoveNode(node)
+        scratch = j.get("scratch_volume", None)
+        if scratch is not None:
+            if slicer.mrmlScene is not None and scratch.GetScene() == slicer.mrmlScene:
+                slicer.mrmlScene.RemoveNode(scratch)
+            j["scratch_volume"] = None
+
+    def _fail_job(self, msg: str) -> None:
+        logger.error(str(msg))
+        self._cleanup_job()
+        prev = (self._active_job or {}).get("vtk_warn_prev", None)
+        if prev is not None:
+            vtk.vtkObject.SetGlobalWarningDisplay(prev)
+        self._finish_job(False, msg)
+
+    def _finalize_job(self) -> None:
+        j = self._active_job
+        if j is None:
             return
 
-        self._active_job = job
-        self._set_ui_busy(True)
-        self._set_status("Computing deformed dose samples...")
-        self._set_progress(0, visible=True)
+        n_samples = int(j.get("n_samples", 0))
+        sum_arr = j.get("sum_arr", None)
+        sumsq_arr = j.get("sumsq_arr", None)
+        min_arr = j.get("min_arr", None)
+        max_arr = j.get("max_arr", None)
 
-        def _cleanup_temp_nodes():
-            j = self._active_job
-            if j is None:
-                return
-            for node in list(j.get("temp_nodes", [])):
-                try:
-                    if node is not None and slicer.mrmlScene is not None and node.GetScene() == slicer.mrmlScene:
-                        slicer.mrmlScene.RemoveNode(node)
-                except Exception:
-                    pass
-            scratch = j.get("scratch_volume", None)
-            if scratch is not None:
-                try:
-                    if slicer.mrmlScene is not None and scratch.GetScene() == slicer.mrmlScene:
-                        slicer.mrmlScene.RemoveNode(scratch)
-                except Exception:
-                    pass
-                j["scratch_volume"] = None
+        if n_samples == 0 or sum_arr is None:
+            self._fail_job("No deformed dose could be computed.")
+            return
 
-        def _fail(msg: str):
-            logger.error(str(msg))
-            _cleanup_temp_nodes()
-            try:
-                prev = job.get("vtk_warn_prev", None)
-                if prev is not None:
-                    vtk.vtkObject.SetGlobalWarningDisplay(prev)
-            except Exception:
-                pass
-            self._finish_job(False, msg)
+        self._set_status("Writing outputs...")
+        self._set_progress(95, visible=True)
 
-        def _finalize():
-            j = self._active_job
-            if j is None:
-                return
+        mean_arr = sum_arr / float(n_samples)
+        ex2 = (sumsq_arr / float(n_samples)) if sumsq_arr is not None else None
+        var_arr = None
+        if ex2 is not None:
+            var_arr = np.maximum(ex2 - (mean_arr * mean_arr), 0.0)
+        std_arr = np.sqrt(var_arr) if var_arr is not None else np.zeros_like(mean_arr)
 
-            n_samples = int(j.get("n_samples", 0))
-            sum_arr = j.get("sum_arr", None)
-            sumsq_arr = j.get("sumsq_arr", None)
-            min_arr = j.get("min_arr", None)
-            max_arr = j.get("max_arr", None)
+        min_target = (
+            self.min_output_selector.currentNode() if hasattr(self.min_output_selector, "currentNode") else None
+        )
+        max_target = (
+            self.max_output_selector.currentNode() if hasattr(self.max_output_selector, "currentNode") else None
+        )
 
-            if n_samples == 0 or sum_arr is None:
-                _fail("No deformed dose could be computed.")
-                return
+        created_volume_names = []
 
-            self._set_status("Writing outputs...")
-            self._set_progress(95, visible=True)
+        mean_name = f"dose_list_{j['base_name']}"
+        mean_volume = self._create_or_update_volume(mean_name, j["reference_volume"], mean_arr, existing_node=None)
+        created_volume_names.append(mean_volume.GetName())
+        self._ensure_node_in_sh_folder(mean_volume, j["folder_item_id"])
 
-            mean_arr = sum_arr / float(n_samples)
-            ex2 = (sumsq_arr / float(n_samples)) if sumsq_arr is not None else None
-            var_arr = None
-            if ex2 is not None:
-                var_arr = np.maximum(ex2 - (mean_arr * mean_arr), 0.0)
-            std_arr = np.sqrt(var_arr) if var_arr is not None else np.zeros_like(mean_arr)
-
-            min_target = (
-                self.min_output_selector.currentNode() if hasattr(self.min_output_selector, "currentNode") else None
+        if self.min_export_checkbox.isChecked() and min_arr is not None:
+            min_volume = self._create_or_update_volume(
+                f"min_dose_{j['base_name']}", j["reference_volume"], min_arr, min_target
             )
-            max_target = (
-                self.max_output_selector.currentNode() if hasattr(self.max_output_selector, "currentNode") else None
+            created_volume_names.append(min_volume.GetName())
+            if min_target is None and hasattr(self.min_output_selector, "setCurrentNode"):
+                self.min_output_selector.setCurrentNode(min_volume)
+            self._ensure_node_in_sh_folder(min_volume, j["folder_item_id"])
+
+        if self.max_export_checkbox.isChecked() and max_arr is not None:
+            max_volume = self._create_or_update_volume(
+                f"max_dose_{j['base_name']}", j["reference_volume"], max_arr, max_target
+            )
+            created_volume_names.append(max_volume.GetName())
+            if max_target is None and hasattr(self.max_output_selector, "setCurrentNode"):
+                self.max_output_selector.setCurrentNode(max_volume)
+            self._ensure_node_in_sh_folder(max_volume, j["folder_item_id"])
+
+        uncertainty_volume = self._create_or_update_volume(
+            f"uncertainty_dose_{j['base_name']}", j["reference_volume"], std_arr, existing_node=None
+        )
+        created_volume_names.append(uncertainty_volume.GetName())
+        self._ensure_node_in_sh_folder(uncertainty_volume, j["folder_item_id"])
+
+        n_mag = int(j.get("n_mag", 0))
+        sum_mag = j.get("sum_mag", None)
+        dvf_mag_failures = int(j.get("dvf_mag_failures", 0))
+        if n_mag > 0 and sum_mag is not None:
+            try:
+                mean_mag = sum_mag / float(n_mag)
+                dvf_mag_volume = self._create_or_update_volume(
+                    f"dvf_magnitude_{j['base_name']}", j["reference_volume"], mean_mag, existing_node=None
+                )
+                created_volume_names.append(dvf_mag_volume.GetName())
+                self._ensure_node_in_sh_folder(dvf_mag_volume, j["folder_item_id"])
+                self._apply_viridis_auto_wl(dvf_mag_volume)
+            except Exception:
+                logger.exception("Failed to compute/export dvf magnitude volume")
+        else:
+            logger.warning(
+                f"DVF magnitude not generated: n_mag={n_mag}, failures={dvf_mag_failures}. "
+                "Transform-to-displacement/magnitude conversion may be unavailable for the selected DVF(s)."
             )
 
-            created_volume_names = []
+        self._cleanup_job()
 
-            mean_name = f"dose_list_{j['base_name']}"
-            mean_volume = self._create_or_update_volume(mean_name, j["reference_volume"], mean_arr, existing_node=None)
-            created_volume_names.append(mean_volume.GetName())
-            self._ensure_node_in_sh_folder(mean_volume, j["folder_item_id"])
-
-            if self.min_export_checkbox.isChecked() and min_arr is not None:
-                min_volume = self._create_or_update_volume(
-                    f"min_dose_{j['base_name']}", j["reference_volume"], min_arr, min_target
+        QMessageBox.information(
+            self,
+            "Computation Complete",
+            (
+                f"Computed mean dose from {n_samples} deformed sample(s) "
+                + f"(from {len(j['selected_doses'])} dose(s)).\n"
+                + (
+                    "Created volumes: " + ", ".join(created_volume_names)
+                    if created_volume_names
+                    else "No volumes created."
                 )
-                created_volume_names.append(min_volume.GetName())
-                if min_target is None and hasattr(self.min_output_selector, "setCurrentNode"):
-                    self.min_output_selector.setCurrentNode(min_volume)
-                self._ensure_node_in_sh_folder(min_volume, j["folder_item_id"])
-
-            if self.max_export_checkbox.isChecked() and max_arr is not None:
-                max_volume = self._create_or_update_volume(
-                    f"max_dose_{j['base_name']}", j["reference_volume"], max_arr, max_target
+                + (
+                    "\nDVF magnitude: not generated"
+                    if (n_mag == 0)
+                    else f"\nDVF magnitude: generated from {n_mag} sample(s)"
                 )
-                created_volume_names.append(max_volume.GetName())
-                if max_target is None and hasattr(self.max_output_selector, "setCurrentNode"):
-                    self.max_output_selector.setCurrentNode(max_volume)
-                self._ensure_node_in_sh_folder(max_volume, j["folder_item_id"])
+            ),
+        )
 
-            try:
-                uncertainty_volume = self._create_or_update_volume(
-                    f"uncertainty_dose_{j['base_name']}", j["reference_volume"], std_arr, existing_node=None
-                )
-                created_volume_names.append(uncertainty_volume.GetName())
-                self._ensure_node_in_sh_folder(uncertainty_volume, j["folder_item_id"])
-            except Exception:
-                logger.exception("Failed to create uncertainty volume")
+        self._finish_job(True, "Done.")
 
-            n_mag = int(j.get("n_mag", 0))
-            sum_mag = j.get("sum_mag", None)
-            dvf_mag_failures = int(j.get("dvf_mag_failures", 0))
-            if n_mag > 0 and sum_mag is not None:
+        prev = j.get("vtk_warn_prev", None)
+        if prev is not None:
+            vtk.vtkObject.SetGlobalWarningDisplay(prev)
+
+    def _tick_job(self) -> None:
+        j = self._active_job
+        if j is None:
+            return
+        tasks = j.get("tasks", [])
+        i = int(j.get("task_index", 0))
+        n = int(len(tasks))
+        if i >= n:
+            self._finalize_job()
+            return
+
+        task = tasks[i]
+        j["task_index"] = i + 1
+
+        base_dose = task["base_dose"]
+        dvf_to_use = task["dvf_to_use"]
+        dose_idx = int(task.get("dose_idx", 0))
+
+        # DVF magnitude: compute once per dvf/frame (not per dose).
+        if dose_idx == 1:
+            dvf_id = dvf_to_use.GetID() if hasattr(dvf_to_use, "GetID") else None
+
+            if dvf_id and (dvf_id not in j.get("mag_done", set())):
                 try:
-                    mean_mag = sum_mag / float(n_mag)
-                    dvf_mag_volume = self._create_or_update_volume(
-                        f"dvf_magnitude_{j['base_name']}", j["reference_volume"], mean_mag, existing_node=None
-                    )
-                    created_volume_names.append(dvf_mag_volume.GetName())
-                    self._ensure_node_in_sh_folder(dvf_mag_volume, j["folder_item_id"])
-                    self._apply_viridis_auto_wl(dvf_mag_volume)
-                except Exception:
-                    logger.exception("Failed to compute/export dvf magnitude volume")
-            else:
-                logger.warning(
-                    f"DVF magnitude not generated: n_mag={n_mag}, failures={dvf_mag_failures}. "
-                    "Transform-to-displacement/magnitude conversion may be unavailable for the selected DVF(s)."
-                )
+                    disp = self._displacement_array_from_transform(dvf_to_use, j["reference_volume"], j["temp_nodes"])
+                    if disp is not None:
+                        disp_arr = np.array(disp, dtype=np.float32, copy=False)
+                        if disp_arr.ndim == 4 and disp_arr.shape[-1] == 3:
+                            mag_i = np.sqrt(np.sum(np.square(disp_arr), axis=-1))
+                        elif disp_arr.ndim == 4 and disp_arr.shape[0] == 3:
+                            disp_last = np.moveaxis(disp_arr, 0, -1)
+                            mag_i = np.sqrt(np.sum(np.square(disp_last), axis=-1))
+                        elif disp_arr.ndim == 3:
+                            mag_i = disp_arr
+                        else:
+                            mag_i = None
 
-            _cleanup_temp_nodes()
-
-            try:
-                QMessageBox.information(
-                    self,
-                    "Computation Complete",
-                    (
-                        f"Computed mean dose from {n_samples} deformed sample(s) "
-                        + "(from {len(j['selected_doses'])} dose(s)).\n"
-                        + (
-                            "Created volumes: " + ", ".join(created_volume_names)
-                            if created_volume_names
-                            else "No volumes created."
-                        )
-                        + (
-                            "\nDVF magnitude: not generated"
-                            if (n_mag == 0)
-                            else f"\nDVF magnitude: generated from {n_mag} sample(s)"
-                        )
-                    ),
-                )
-            except Exception:
-                pass
-            self._finish_job(True, "Done.")
-
-            try:
-                prev = job.get("vtk_warn_prev", None)
-                if prev is not None:
-                    vtk.vtkObject.SetGlobalWarningDisplay(prev)
-            except Exception:
-                pass
-
-        def _tick():
-            j = self._active_job
-            if j is None:
-                return
-            tasks = j.get("tasks", [])
-            i = int(j.get("task_index", 0))
-            n = int(len(tasks))
-            if i >= n:
-                _finalize()
-                return
-
-            task = tasks[i]
-            j["task_index"] = i + 1
-
-            base_dose = task["base_dose"]
-            dvf_to_use = task["dvf_to_use"]
-            dose_idx = int(task.get("dose_idx", 0))
-            dvf_idx = int(task.get("dvf_idx", 0))
-            frame_idx = int(task.get("frame_idx", 0))
-
-            # DVF magnitude: compute once per dvf/frame (not per dose).
-            if dose_idx == 1:
-                try:
-                    dvf_id = dvf_to_use.GetID() if hasattr(dvf_to_use, "GetID") else None
-                except Exception:
-                    dvf_id = None
-                if dvf_id and (dvf_id not in j.get("mag_done", set())):
-                    try:
-                        disp = self._displacement_array_from_transform(
-                            dvf_to_use, j["reference_volume"], j["temp_nodes"]
-                        )
-                        if disp is not None:
-                            disp_arr = np.array(disp, dtype=np.float32, copy=False)
-                            if disp_arr.ndim == 4 and disp_arr.shape[-1] == 3:
-                                mag_i = np.sqrt(np.sum(np.square(disp_arr), axis=-1))
-                            elif disp_arr.ndim == 4 and disp_arr.shape[0] == 3:
-                                disp_last = np.moveaxis(disp_arr, 0, -1)
-                                mag_i = np.sqrt(np.sum(np.square(disp_last), axis=-1))
-                            elif disp_arr.ndim == 3:
-                                mag_i = disp_arr
+                        if mag_i is not None:
+                            if j.get("sum_mag", None) is None:
+                                j["sum_mag"] = np.array(mag_i, dtype=np.float32, copy=True)
                             else:
-                                mag_i = None
-
-                            if mag_i is not None:
-                                if j.get("sum_mag", None) is None:
-                                    j["sum_mag"] = np.array(mag_i, dtype=np.float32, copy=True)
-                                else:
-                                    j["sum_mag"] = j["sum_mag"] + mag_i
-                                j["n_mag"] = int(j.get("n_mag", 0)) + 1
-                            else:
-                                j["dvf_mag_failures"] = int(j.get("dvf_mag_failures", 0)) + 1
+                                j["sum_mag"] = j["sum_mag"] + mag_i
+                            j["n_mag"] = int(j.get("n_mag", 0)) + 1
                         else:
                             j["dvf_mag_failures"] = int(j.get("dvf_mag_failures", 0)) + 1
-                    except Exception:
+                    else:
                         j["dvf_mag_failures"] = int(j.get("dvf_mag_failures", 0)) + 1
-                    try:
-                        j["mag_done"].add(dvf_id)
-                    except Exception:
-                        pass
-
-            # Deform dose sample using async CLI (avoid runSync).
-            warped_volume = j.get("scratch_volume", None)
-            if warped_volume is None:
-                warped_name = f"{self._safe_node_name(base_dose)}_warped_tmp"
-                warped_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", warped_name)
-                try:
-                    warped_volume.SetHideFromEditors(1)
-                    warped_volume.SetSelectable(0)
-                    warped_volume.SetSaveWithScene(0)
                 except Exception:
-                    pass
-                j["scratch_volume"] = warped_volume
+                    j["dvf_mag_failures"] = int(j.get("dvf_mag_failures", 0)) + 1
+                j["mag_done"].add(dvf_id)
 
-            params = {
-                "inputVolume": base_dose.GetID(),
-                "referenceVolume": j["reference_volume"].GetID(),
-                "outputVolume": warped_volume.GetID(),
-                "interpolationType": "linear",
-                "transformationFile": dvf_to_use.GetID(),
-            }
+        # Deform dose sample using async CLI (avoid runSync).
+        warped_volume = j.get("scratch_volume", None)
+        if warped_volume is None:
+            warped_name = f"{self._safe_node_name(base_dose)}_warped_tmp"
+            warped_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", warped_name)
+            warped_volume.SetHideFromEditors(1)
+            warped_volume.SetSelectable(0)
+            warped_volume.SetSaveWithScene(0)
 
-            def _done():
-                j2 = self._active_job
-                if j2 is None:
-                    return
-                try:
-                    arr = slicer.util.arrayFromVolume(warped_volume).astype(np.float32, copy=False)
-                except Exception:
-                    logger.warning(
-                        f"Dose {dose_idx}: Could not read deformed volume for DVF {dvf_idx} (frame {frame_idx})"
-                    )
-                    try:
-                        QTimer.singleShot(0, _tick)
-                    except Exception:
-                        _tick()
-                    return
+            j["scratch_volume"] = warped_volume
 
-                if j2.get("sum_arr", None) is None:
-                    j2["sum_arr"] = np.array(arr, dtype=np.float32, copy=True)
-                    tmp = np.empty_like(arr)
-                    np.multiply(arr, arr, out=tmp, casting="unsafe")
-                    j2["sumsq_arr"] = tmp
-                    j2["min_arr"] = np.array(arr, dtype=np.float32, copy=True)
-                    j2["max_arr"] = np.array(arr, dtype=np.float32, copy=True)
-                else:
-                    np.add(j2["sum_arr"], arr, out=j2["sum_arr"], casting="unsafe")
-                    tmp = np.empty_like(arr)
-                    np.multiply(arr, arr, out=tmp, casting="unsafe")
-                    np.add(j2["sumsq_arr"], tmp, out=j2["sumsq_arr"], casting="unsafe")
-                    np.minimum(j2["min_arr"], arr, out=j2["min_arr"])
-                    np.maximum(j2["max_arr"], arr, out=j2["max_arr"])
+        params = {
+            "inputVolume": base_dose.GetID(),
+            "referenceVolume": j["reference_volume"].GetID(),
+            "outputVolume": warped_volume.GetID(),
+            "interpolationType": "linear",
+            "transformationFile": dvf_to_use.GetID(),
+        }
 
-                j2["n_samples"] = int(j2.get("n_samples", 0)) + 1
+        on_done = partial(self._handle_warp_done, task=task, index=i, total=n, warped_volume=warped_volume)
+        on_error = partial(self._handle_warp_error, task=task, index=i, total=n)
+        self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, on_done, on_error)
 
-                try:
-                    p = int(5 + (85 * float(i + 1) / float(max(1, n))))
-                except Exception:
-                    p = 50
-                self._set_progress(min(90, p), visible=True)
-                self._set_status(f"Computing deformed dose samples... ({i + 1}/{n})")
+    def _handle_warp_done(self, task: dict[str, Any], index: int, total: int, warped_volume: Any) -> None:
+        j2 = self._active_job
+        if j2 is None:
+            return
+        arr = slicer.util.arrayFromVolume(warped_volume).astype(np.float32, copy=False)
 
-                try:
-                    QTimer.singleShot(0, _tick)
-                except Exception:
-                    _tick()
+        tmp = j2.get("tmp_arr", None)
+        if tmp is None or tmp.shape != arr.shape:
+            tmp = np.empty_like(arr)
+            j2["tmp_arr"] = tmp
 
-            def _err(exc):
-                logger.exception(f"Dose {dose_idx}: Failed to deform with DVF {dvf_idx} (frame {frame_idx}): {exc}")
-                _fail(f"Deformation failed: {exc}")
+        if j2.get("sum_arr", None) is None:
+            j2["sum_arr"] = np.array(arr, dtype=np.float32, copy=True)
+            np.multiply(arr, arr, out=tmp, casting="unsafe")
+            j2["sumsq_arr"] = np.array(tmp, dtype=np.float32, copy=True)
+            j2["min_arr"] = np.array(arr, dtype=np.float32, copy=True)
+            j2["max_arr"] = np.array(arr, dtype=np.float32, copy=True)
+        else:
+            np.add(j2["sum_arr"], arr, out=j2["sum_arr"], casting="unsafe")
+            np.multiply(arr, arr, out=tmp, casting="unsafe")
+            np.add(j2["sumsq_arr"], tmp, out=j2["sumsq_arr"], casting="unsafe")
+            np.minimum(j2["min_arr"], arr, out=j2["min_arr"])
+            np.maximum(j2["max_arr"], arr, out=j2["max_arr"])
 
-            self._run_cli_async(slicer.modules.resamplescalarvectordwivolume, params, _done, _err)
+        j2["n_samples"] = int(j2.get("n_samples", 0)) + 1
 
-        try:
-            QTimer.singleShot(0, _tick)
-        except Exception:
-            _tick()
+        p = int(5 + (85 * float(index + 1) / float(max(1, total))))
+        self._set_progress(min(90, p), visible=True)
+        self._set_status(f"Computing deformed dose samples... ({index + 1}/{total})")
 
-    def _export_volume_as_dicom(self, volume_node, export_dir: str, ref_ct_node, session_idx: int) -> int:
+        self._schedule_tick()
+
+    def _handle_warp_error(self, exc: Exception, task: dict[str, Any], index: int, total: int) -> None:
+        dose_idx = int(task.get("dose_idx", 0))
+        dvf_idx = int(task.get("dvf_idx", 0))
+        frame_idx = int(task.get("frame_idx", 0))
+        logger.exception(f"Dose {dose_idx}: Failed to deform with DVF {dvf_idx} (frame {frame_idx}): {exc}")
+        self._fail_job(f"Deformation failed: {exc}")
+
+    def _export_volume_as_dicom(self, volume_node: Any, export_dir: str, ref_ct_node: Any, session_idx: int) -> int:
         try:
             base_folder = os.path.join(export_dir, "sCT")
             vol_name = self._safe_node_name(volume_node)
@@ -1408,102 +1343,90 @@ class PrescriptionDoseEstimationWidget(BaseImpactWidget):
             logger.exception(f"Failed to export sCT session {session_idx+1}")
             return 0
 
-    def _export_sequence_as_dicom(self, sequence_node, export_dir: str, ref_ct_node, session_idx: int) -> int:
-        try:
-            exported_count = 0
-            num_items = self._get_sequence_length(sequence_node)
-            if num_items == 0:
-                logger.warning(f"Could not determine sequence length for session {session_idx+1}")
-                return 0
+    def _export_sequence_as_dicom(self, sequence_node: Any, export_dir: str, ref_ct_node: Any, session_idx: int) -> int:
+        exported_count = 0
+        num_items = self._get_sequence_length(sequence_node)
+        if num_items == 0:
+            logger.warning(f"Could not determine sequence length for session {session_idx+1}")
+            return 0
 
-            base_folder = os.path.join(export_dir, "sCT")
-            seq_name = self._safe_node_name(sequence_node)
-            seq_root_folder = os.path.join(
-                base_folder, f"{int(session_idx):03d}_{self._safe_path_component(seq_name, 'sCT_sequence')}"
-            )
-            os.makedirs(seq_root_folder, exist_ok=True)
+        base_folder = os.path.join(export_dir, "sCT")
+        seq_name = self._safe_node_name(sequence_node)
+        seq_root_folder = os.path.join(
+            base_folder, f"{int(session_idx):03d}_{self._safe_path_component(seq_name, 'sCT_sequence')}"
+        )
+        os.makedirs(seq_root_folder, exist_ok=True)
 
-            import DICOMScalarVolumePlugin
+        import DICOMScalarVolumePlugin
 
-            sh_node = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-            ref_ct_item_id = sh_node.GetItemByDataNode(ref_ct_node) if ref_ct_node is not None else 0
-            if ref_ct_item_id == 0:
-                logger.error("Could not find subject hierarchy item for reference CT")
-                return 0
+        sh_node = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+        ref_ct_item_id = sh_node.GetItemByDataNode(ref_ct_node) if ref_ct_node is not None else 0
+        if ref_ct_item_id == 0:
+            logger.error("Could not find subject hierarchy item for reference CT")
+            return 0
 
-            study_item_id = ref_ct_item_id
-            metadata = self._extract_ref_ct_metadata(ref_ct_node)
-            for item_idx in range(num_items):
-                try:
-                    frame_node = sequence_node.GetNthDataNode(item_idx)
-                    if frame_node is None or not frame_node.GetImageData():
-                        continue
-
-                    export_node = frame_node
-                    temp_node = None
-                    try:
-                        temp_node = slicer.mrmlScene.AddNewNodeByClass(
-                            frame_node.GetClassName(), f"{sequence_node.GetName()}_{item_idx}"
-                        )
-                        temp_node.Copy(frame_node)
-                        export_node = temp_node
-
-                        exporter = DICOMScalarVolumePlugin.DICOMScalarVolumePluginClass()
-                        export_item_id = sh_node.GetItemByDataNode(export_node)
-
-                        sh_node.SetItemParent(export_item_id, study_item_id)
-                        exportables = exporter.examineForExport(export_item_id)
-
-                        frame_id = export_node.GetID() if hasattr(export_node, "GetID") else None
-
-                        filtered = []
-                        for exp in exportables:
-                            try:
-                                if frame_id is not None:
-                                    if hasattr(exp, "setNodeID"):
-                                        exp.setNodeID(frame_id)
-                                    elif hasattr(exp, "nodeID"):
-                                        exp.nodeID = frame_id
-                                if hasattr(exp, "setSubjectHierarchyItemID"):
-                                    exp.setSubjectHierarchyItemID(export_item_id)
-                                elif hasattr(exp, "subjectHierarchyItemID"):
-                                    exp.subjectHierarchyItemID = export_item_id
-                            except Exception:
-                                pass
-
-                            exp_node_id = getattr(exp, "nodeID", None)
-                            if exp_node_id in (None, frame_id):
-                                filtered.append(exp)
-                        exportables = filtered
-
-                        frame_folder = os.path.join(seq_root_folder, f"frame_{int(item_idx):04d}")
-                        os.makedirs(frame_folder, exist_ok=True)
-                        for exp in exportables:
-                            self._configure_export_tags(
-                                exp,
-                                frame_folder,
-                                metadata,
-                                2000 + session_idx * 100 + item_idx,
-                                f"sCT Sequence - Frame {item_idx}",
-                            )
-                        exporter.export(exportables)
-                        logger.info(
-                            f"Exported sCT sequence item {item_idx} (session {session_idx+1}) to DICOM: {frame_folder}"
-                        )
-                        exported_count += 1
-                    finally:
-                        if temp_node is not None:
-                            try:
-                                slicer.mrmlScene.RemoveNode(temp_node)
-                            except Exception:
-                                pass
-                except Exception as e:
-                    logger.exception(f"Failed to export sequence item {item_idx}: {e}")
+        study_item_id = ref_ct_item_id
+        metadata = self._extract_ref_ct_metadata(ref_ct_node)
+        for item_idx in range(num_items):
+            try:
+                frame_node = sequence_node.GetNthDataNode(item_idx)
+                if frame_node is None or not frame_node.GetImageData():
                     continue
-            return exported_count
-        except OSError as e:
-            logger.error(f"I/O error during sequence export for session {session_idx+1}: {e}")
-            return 0
-        except Exception as e:
-            logger.exception(f"Failed to export sequence for session {session_idx+1}: {e}")
-            return 0
+
+                export_node = frame_node
+                temp_node = None
+                try:
+                    temp_node = slicer.mrmlScene.AddNewNodeByClass(
+                        frame_node.GetClassName(), f"{sequence_node.GetName()}_{item_idx}"
+                    )
+                    temp_node.Copy(frame_node)
+                    export_node = temp_node
+
+                    exporter = DICOMScalarVolumePlugin.DICOMScalarVolumePluginClass()
+                    export_item_id = sh_node.GetItemByDataNode(export_node)
+
+                    sh_node.SetItemParent(export_item_id, study_item_id)
+                    exportables = exporter.examineForExport(export_item_id)
+
+                    frame_id = export_node.GetID() if hasattr(export_node, "GetID") else None
+
+                    filtered = []
+                    for exp in exportables:
+                        if frame_id is not None:
+                            if hasattr(exp, "setNodeID"):
+                                exp.setNodeID(frame_id)
+                            elif hasattr(exp, "nodeID"):
+                                exp.nodeID = frame_id
+                        if hasattr(exp, "setSubjectHierarchyItemID"):
+                            exp.setSubjectHierarchyItemID(export_item_id)
+                        elif hasattr(exp, "subjectHierarchyItemID"):
+                            exp.subjectHierarchyItemID = export_item_id
+
+                        exp_node_id = getattr(exp, "nodeID", None)
+                        if exp_node_id in (None, frame_id):
+                            filtered.append(exp)
+                    exportables = filtered
+
+                    frame_folder = os.path.join(seq_root_folder, f"frame_{int(item_idx):04d}")
+                    os.makedirs(frame_folder, exist_ok=True)
+                    for exp in exportables:
+                        self._configure_export_tags(
+                            exp,
+                            frame_folder,
+                            metadata,
+                            2000 + session_idx * 100 + item_idx,
+                            f"sCT Sequence - Frame {item_idx}",
+                        )
+                    exporter.export(exportables)
+                    logger.info(
+                        f"Exported sCT sequence item {item_idx} (session {session_idx+1}) to DICOM: {frame_folder}"
+                    )
+                    exported_count += 1
+                finally:
+                    if temp_node is not None:
+                        slicer.mrmlScene.RemoveNode(temp_node)
+
+            except Exception as e:
+                logger.exception(f"Failed to export sequence item {item_idx}: {e}")
+                continue
+        return exported_count

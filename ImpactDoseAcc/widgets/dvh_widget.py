@@ -25,12 +25,12 @@ class DVHWidget(BaseImpactWidget):
     - Automatic binning based on max dose.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self._dose_node_by_index_a = {0: None}
-        self._dose_node_by_index_b = {0: None}
-        self._segment_checkbox_by_id = {}
-        self._active_job = None
+        self._dose_node_by_index_a: dict[int, Any] = {0: None}
+        self._dose_node_by_index_b: dict[int, Any] = {0: None}
+        self._segment_checkbox_by_id: dict[str, QCheckBox] = {}
+        self._active_job: dict[str, Any] | None = None
         self._plot_view_node = None
         self._setup_ui()
 
@@ -110,7 +110,7 @@ class DVHWidget(BaseImpactWidget):
         self._on_dose_selection_changed()
         self._update_legend(structure_items=[])
 
-    def _set_plot_chart_on_widget(self, chart_node) -> None:
+    def _set_plot_chart_on_widget(self, chart_node: Any) -> None:
         """Attach a vtkMRMLPlotChartNode to the embedded plot widget using standard APIs only.
 
         This does not force visibility or perform UI event loop tricks — it delegates to the
@@ -150,7 +150,7 @@ class DVHWidget(BaseImpactWidget):
             elif hasattr(self.plot_widget, "setMRMLPlotViewNodeID") and hasattr(self._plot_view_node, "GetID"):
                 self.plot_widget.setMRMLPlotViewNodeID(self._plot_view_node.GetID())
 
-    def _set_chart_legend_visible(self, chart_node, visible: bool) -> None:
+    def _set_chart_legend_visible(self, chart_node: Any, visible: bool) -> None:
         if chart_node is None:
             return
         v = bool(visible)
@@ -164,7 +164,7 @@ class DVHWidget(BaseImpactWidget):
                 getattr(chart_node, meth)(1 if v else 0)
                 return
 
-    def _apply_series_opacity(self, series, alpha: float) -> None:
+    def _apply_series_opacity(self, series: Any, alpha: float) -> None:
         if series is None:
             return
         a = float(alpha)
@@ -174,14 +174,14 @@ class DVHWidget(BaseImpactWidget):
                 getattr(series, meth)(a)
                 return
 
-    def _rgb01_to_hex(self, rgb):
+    def _rgb01_to_hex(self, rgb: tuple[float, float, float]) -> str:
         r, g, b = rgb
         r = int(max(0, min(255, round(float(r) * 255.0))))
         g = int(max(0, min(255, round(float(g) * 255.0))))
         b = int(max(0, min(255, round(float(b) * 255.0))))
         return f"#{r:02x}{g:02x}{b:02x}"
 
-    def _update_legend(self, structure_items):
+    def _update_legend(self, structure_items: list[dict[str, Any]] | None) -> None:
         """Update custom legend.
 
         structure_items: list of dicts with keys: name, color(rgb01)
@@ -227,10 +227,10 @@ class DVHWidget(BaseImpactWidget):
         else:
             self._on_dose_selection_changed()
 
-    def _selected_dose_node_a(self):
+    def _selected_dose_node_a(self) -> Any | None:
         return self._dose_node_by_index_a.get(self._combo_current_index(self.dose_combo_a), None)
 
-    def _selected_dose_node_b(self):
+    def _selected_dose_node_b(self) -> Any | None:
         return self._dose_node_by_index_b.get(self._combo_current_index(self.dose_combo_b), None)
 
     def _refresh_dose_lists(self) -> None:
@@ -304,7 +304,7 @@ class DVHWidget(BaseImpactWidget):
             if w is not None:
                 w.setParent(None)
 
-    def _on_segmentation_changed(self, seg_node) -> None:
+    def _on_segmentation_changed(self, seg_node: Any) -> None:
         self._segment_checkbox_by_id = {}
         self._clear_layout(self._segments_scroll_layout)
 
@@ -331,12 +331,10 @@ class DVHWidget(BaseImpactWidget):
 
         self._segments_scroll_layout.addStretch()
 
-    def _selected_segment_ids(self):
+    def _selected_segment_ids(self) -> list[str]:
         return [sid for sid, cb in self._segment_checkbox_by_id.items() if cb is not None and cb.isChecked()]
 
-    # show_png removed per user request
-
-    def _load_png_node(self, path: str, name: str):
+    def _load_png_node(self, path: str, name: str) -> Any | None:
         if slicer.mrmlScene is None or not path or not os.path.exists(path):
             return None
         existing = slicer.mrmlScene.GetFirstNodeByName(name)
@@ -348,7 +346,6 @@ class DVHWidget(BaseImpactWidget):
                 storage.ReadData(existing)
                 return existing
 
-            # Fallback: remove display/storage nodes then node to avoid VTK pipeline warnings
             if existing.GetScene() == slicer.mrmlScene:
                 dn = existing.GetDisplayNode() if hasattr(existing, "GetDisplayNode") else None
                 if dn is not None and dn.GetScene() == slicer.mrmlScene:
@@ -386,12 +383,9 @@ class DVHWidget(BaseImpactWidget):
         if unc_b is None:
             self.cb_unc_b.setChecked(False)
 
-    def _auto_bin_width_gy(self, max_dose_gy: float) -> float:
-        # Minimal & robust: use 1 Gy bins.
-        # If a Slicer Plot build uses point index on X, this keeps the displayed X values in Gy.
-        return 1.0
-
-    def _compute_cumulative_dvh(self, dose_vals: np.ndarray, bins_edges_gy: np.ndarray, voxel_volume_cc: float):
+    def _compute_cumulative_dvh(
+        self, dose_vals: np.ndarray, bins_edges_gy: np.ndarray, voxel_volume_cc: float
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
         if dose_vals is None or bins_edges_gy is None:
             return None, None
         vals = np.asarray(dose_vals, dtype=np.float32)
@@ -444,7 +438,7 @@ class DVHWidget(BaseImpactWidget):
     def _dvh_fail(self, msg: str) -> None:
         self._dvh_finish(False, msg)
 
-    def _dvh_dose_grid_scaling_from_node(self, n) -> float:
+    def _dvh_dose_grid_scaling_from_node(self, n: Any) -> float:
         if n is None or not hasattr(n, "GetAttribute"):
             return 1.0
         keys = (
@@ -587,7 +581,7 @@ class DVHWidget(BaseImpactWidget):
 
         self._dvh_schedule_tick()
 
-    def _dvh_create_or_get_table_node(self, name: str):
+    def _dvh_create_or_get_table_node(self, name: str) -> Any | None:
         if slicer.mrmlScene is None:
             return None
         node = slicer.mrmlScene.GetFirstNodeByName(name)
@@ -619,7 +613,9 @@ class DVHWidget(BaseImpactWidget):
         s = s.strip("._ ")
         return s or "dvh"
 
-    def _dvh_render_matplotlib_png(self, table_name: str, centers2: np.ndarray, curves_cached):
+    def _dvh_render_matplotlib_png(
+        self, table_name: str, centers2: np.ndarray, curves_cached: list[dict[str, Any]]
+    ) -> str | None:
         try:
             import matplotlib
         except Exception:
@@ -653,7 +649,7 @@ class DVHWidget(BaseImpactWidget):
             key = (c.get("_dose_label", ""), c.get("_seg_id", ""))
             grouped.setdefault(key, {})[c.get("_kind", "mean") or "mean"] = c
 
-        structure_handles = []
+        structure_handles: list[Any] = []
         structure_labels = []
         added_struct_labels = set()
         unc_patch_handle = None
@@ -733,18 +729,18 @@ class DVHWidget(BaseImpactWidget):
 
     def _dvh_add_line_series(
         self,
-        table_node,
-        chart_node,
+        table_node: Any,
+        chart_node: Any,
         table_name: str,
         x_col_name: str,
         series_index: int,
         y_col: str,
-        rgb,
+        rgb: tuple[float, float, float] | None,
         name_suffix: str,
         width: int,
         dashed: bool,
-        opacity=None,
-        created_series_nodes=None,
+        opacity: float | None = None,
+        created_series_nodes: list[Any] | None = None,
     ) -> int:
         sname = f"{table_name}_{series_index:02d}_{name_suffix}"
         series_index += 1
@@ -778,7 +774,7 @@ class DVHWidget(BaseImpactWidget):
             created_series_nodes.append(s)
         return series_index
 
-    def _dvh_find_child_folder(self, sh_node, parent, name: str) -> int:
+    def _dvh_find_child_folder(self, sh_node: Any, parent: int, name: str) -> int:
         try:
             ids = vtk.vtkIdList()
             sh_node.GetItemChildren(parent, ids)
@@ -790,7 +786,7 @@ class DVHWidget(BaseImpactWidget):
             pass
         return 0
 
-    def _dvh_reparent_node(self, sh_node, node, parent_folder_item) -> None:
+    def _dvh_reparent_node(self, sh_node: Any, node: Any, parent_folder_item: int) -> None:
         if node is None or not parent_folder_item:
             return
         item = int(sh_node.GetItemByDataNode(node) or 0)
@@ -799,13 +795,18 @@ class DVHWidget(BaseImpactWidget):
         sh_node.SetItemParent(item, int(parent_folder_item))
 
     def _dvh_reparent_outputs(
-        self, table_node, chart_node, created_series_nodes, table_name: str, png_path: str | None
-    ):
+        self,
+        table_node: Any,
+        chart_node: Any,
+        created_series_nodes: list[Any] | None,
+        table_name: str,
+        png_path: str | None,
+    ) -> None:
         sh_node = self._get_sh_node()
         if sh_node is None:
             return
         parent_item = 0
-        dose_nodes = (self._active_job or {}).get("dose_nodes", []) or []
+        dose_nodes = list((self._active_job or {}).get("dose_nodes") or [])
         dose_a = dose_nodes[0] if len(dose_nodes) > 0 else None
 
         if dose_a is not None:
@@ -1086,8 +1087,7 @@ class DVHWidget(BaseImpactWidget):
 
         max_dose = float(max_dose_gy)
 
-        bw = self._auto_bin_width_gy(max_dose)
-        edges = np.arange(0.0, float(max_dose) + float(bw), float(bw), dtype=np.float32)
+        edges = np.arange(0.0, float(max_dose) + 1.0, 1.0, dtype=np.float32)
         if edges.size < 2:
             self._dvh_fail("Failed to build DVH bins.")
             return

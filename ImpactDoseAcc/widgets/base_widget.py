@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 
 class BaseImpactWidget(QWidget):
 
-    def _is_name_match(self, node, needle: str) -> bool:
+    def _is_name_match(self, node: Any, needle: str) -> bool:
         return str(needle).lower() in self._safe_node_name(node).lower()
 
-    def _run_cli_async(self, cli_module, params: dict, on_done, on_error) -> None:
+    def _run_cli_async(
+        self,
+        cli_module: Any,
+        params: dict[str, Any],
+        on_done: Callable[[], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
         """Run a Slicer CLI without blocking the UI. Shared implementation for widgets."""
         try:
             cli_node = slicer.cli.run(cli_module, None, params, wait_for_completion=False)
@@ -101,13 +107,13 @@ class BaseImpactWidget(QWidget):
             _cleanup()
             on_error(exc)
 
-    def __init__(self, logic=None):
+    def __init__(self, logic: Any = None) -> None:
         super().__init__()
         self.logic = logic
         self._root_widget = None
         self.ui = None
 
-    def _combo_current_index(self, combo) -> int:
+    def _combo_current_index(self, combo: Any) -> int:
         """Return currentIndex from a QComboBox in a PythonQt-safe way."""
         if combo is None:
             return 0
@@ -142,7 +148,7 @@ class BaseImpactWidget(QWidget):
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text or "")
 
-    def _set_progress(self, value, visible: bool = True) -> None:
+    def _set_progress(self, value: int | None, visible: bool = True) -> None:
         if not hasattr(self, "progress_bar") or self.progress_bar is None:
             return
         if value is None:
@@ -160,7 +166,7 @@ class BaseImpactWidget(QWidget):
         return f"{prefix}_{uuid4().hex[:2]}"
 
     # --- MRML helpers ---
-    def _get_sh_node(self) -> Any:
+    def _get_sh_node(self) -> Any | None:
         if slicer.mrmlScene is None:
             return None
         try:
@@ -210,7 +216,7 @@ class BaseImpactWidget(QWidget):
         except Exception:
             logger.exception("safe_remove failed")
 
-    def _find_uncertainty_in_same_folder(self, dose_node: Any) -> Any:
+    def _find_uncertainty_in_same_folder(self, dose_node: Any) -> Any | None:
         """Return an uncertainty volume that lives in the same Subject Hierarchy folder as the given dose volume.
 
         Preference order: prefer names matching 'uncertainty_{base}' or 'uncertainty_dose_{base}',
