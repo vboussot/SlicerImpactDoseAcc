@@ -1,26 +1,25 @@
-# 🧠 Slicer IMPACT-DoseAcc
+# Slicer IMPACT-DoseAcc
 
-<img src="ImpactDoseAcc.png" alt="IMPACT reg Logo" width="150" align="right">
+<img src="ImpactDoseAcc.png" alt="IMPACT DoseAcc logo" width="150" align="right">
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/vboussot/IMPACTDoseacc/blob/main/LICENSE)
-
-
-## 🎥 Demonstration Video
-
-In coming
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## Overview
 
-IMPACT-DoseAcc is a 3D Slicer extension for dose accumulation and uncertainty quantification in radiotherapy. It provides utilities for:
+IMPACT-DoseAcc is a 3D Slicer extension for dose accumulation and uncertainty quantification in radiotherapy. It is organized into four workflow phases:
 
-- Accumulating dose over multiple fractions
-- Estimating voxel-wise uncertainty (standard deviation / min / max)
-- Computing clinical metrics (MAE, gamma, DVH) with optional uncertainty-aware outputs
-- Visualizing DVHs and charts and exporting results for further analysis
+- **Phase 1 - Prescription**: prepare reference volumes, sessions, and export options.
+- **Phase 2 - Accumulation**: accumulate dose with optional uncertainty handling.
+- **Phase 3 - Metrics**: compute MAE, gamma pass rates, and summary statistics.
+- **Phase 4 - DVH**: generate per‑segment DVHs with optional uncertainty traces.
+
+## Demo Video
+
+Coming soon.
 
 ## Figures
 
-Some example visualizations are available in the `docs/` folder:
+Example visualizations are available in the `docs/` folder:
 
 <p align="center">
   <img src="docs/dose_accumulation.png" alt="Dose accumulation" width="45%" />
@@ -32,8 +31,17 @@ Some example visualizations are available in the `docs/` folder:
   <img src="docs/QA.png" alt="QA example" width="45%" />
 </p>
 
+## Requirements
+
+- **3D Slicer** (recent 5.x recommended)
+- **SlicerRT** for gamma computation (DoseComparison module)
+- Optional: `matplotlib` for PNG export of DVH plots
+
+Most scientific Python dependencies (`numpy`, `vtk`, etc.) are bundled with Slicer.
 
 ## Installation
+
+### Load as a local module
 
 1. Clone the repository:
 
@@ -41,33 +49,34 @@ Some example visualizations are available in the `docs/` folder:
 git clone https://github.com/vboussot/SlicerImpactDoseAcc.git
 ```
 
-2. Install the extension in Slicer:
-   - Open the Extensions Manager → "Install from file" → select the extension, or follow the build instructions where applicable.
-   - Alternatively, use the Slicer extension manager or local extension directory.
+2. In Slicer: `Edit → Application Settings → Modules → Additional module paths`
+3. Add the `ImpactDoseAcc` folder (inside this repo) and restart Slicer.
 
-3. Optional dependencies (required for specific features):
-   - `pymedphys` (gamma computation), `numpy`, `matplotlib`. Note: `vtk` and many imaging dependencies are provided by Slicer.
 
 ## Quick Start
 
-- Phase 1 — Prescription: prepare reference volumes and parameters.
-- Phase 2 — Accumulation: choose accumulation strategy and uncertainty options.
-- Phase 3 — Metrics: compute MAE, mean dose, mean uncertainty, gamma pass rates.
-- Phase 4 — DVH: generate per-segment DVHs with optional uncertainty traces if an `uncertainty_*` volume is available in the same Subject Hierarchy folder.
+1. **Prescription**: choose the reference CT, select dose(s) and DVF(s), and set output name.
+2. **Accumulation**: select sessions, choose a strategy, and compute the accumulated dose.
+3. **Metrics**: compute MAE, gamma, and uncertainty summaries.
+4. **DVH**: select segments and generate plots/tables.
 
-See the `docs/` folder for example workflows and screenshots.
+## Outputs (default names)
+
+Depending on the options chosen, the module writes:
+
+- `dose_list_<name>` (mean dose)
+- `min_dose_<name>` / `max_dose_<name>`
+- `uncertainty_dose_<name>`
+- `dvf_magnitude_<name>`
 
 ## Contributing
 
-Contributions are welcome:
-
 - Open an issue to discuss changes or feature requests
-- Submit a focused pull request with tests and a clear description
+- Submit focused pull requests with a clear description
 
 ## License
 
-This project is distributed under the **Apache License 2.0**. See the `LICENSE` file.
-
+This project is distributed under the **Apache License 2.0**. See `LICENSE`.
 
 
 
