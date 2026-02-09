@@ -33,7 +33,7 @@ Example visualizations are available in the `docs/` folder:
 
 ## Requirements
 
-- **3D Slicer** (recent 5.x recommended)
+- **3D Slicer** (5.10 recommended)
 - **SlicerRT** for gamma computation (DoseComparison module)
 - Optional: `matplotlib` for PNG export of DVH plots
 
