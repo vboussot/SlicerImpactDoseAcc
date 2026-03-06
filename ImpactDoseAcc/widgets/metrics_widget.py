@@ -531,11 +531,11 @@ class MetricsEvaluationWidget(BaseImpactWidget):
             raise RuntimeError("No active job")
         # Avoid forcing float64 + copies: this can double memory and slow things down.
         # Gamma/metrics computations work fine with float32 in practice.
-        out_arr = np.asarray(slicer.util.arrayFromVolume(job["out_dose_node"]), dtype=np.float32, copy=False)
-        ref_arr = np.asarray(slicer.util.arrayFromVolume(job["ref_eval_node"]), dtype=np.float32, copy=False)
+        out_arr = slicer.util.arrayFromVolume(job["out_dose_node"]).astype(np.float32, copy=False)
+        ref_arr = slicer.util.arrayFromVolume(job["ref_eval_node"]).astype(np.float32, copy=False)
         unc_arr = None
         if job.get("unc_eval_node") is not None:
-            unc_arr = np.asarray(slicer.util.arrayFromVolume(job["unc_eval_node"]), dtype=np.float32, copy=False)
+            unc_arr = slicer.util.arrayFromVolume(job["unc_eval_node"]).astype(np.float32, copy=False)
         return out_arr, ref_arr, unc_arr
 
     def _metrics_arrays_error(self, exc) -> None:
@@ -721,7 +721,7 @@ class MetricsEvaluationWidget(BaseImpactWidget):
         except Exception:
             pass
 
-        gamma_arr = np.asarray(slicer.util.arrayFromVolume(gamma_node), dtype=np.float32, copy=False)
+        gamma_arr = slicer.util.arrayFromVolume(gamma_node).astype(np.float32, copy=False)
         return gamma_arr
 
     def _metrics_gamma_done(self, gamma_arr) -> None:
