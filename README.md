@@ -69,6 +69,10 @@ Depending on the options chosen, the module writes:
 - `uncertainty_dose_<name>`
 - `dvf_magnitude_<name>`
 
+## Citation
+
+GitHub users can use this repository's [CITATION.cff](CITATION.cff) file. When using IMPACT-DoseAcc, please cite the associated paper: [An Uncertainty Estimation Framework for Dose Accumulation in Adaptive Radiotherapy](https://arxiv.org/abs/2606.11012).
+
 ## Contributing
 
 - Open an issue to discuss changes or feature requests

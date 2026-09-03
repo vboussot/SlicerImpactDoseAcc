@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper below."
+type: software
+title: "IMPACT-DoseAcc"
+authors:
+  - family-names: "Hémon"
+    given-names: "Cédric"
+  - family-names: "Boussot"
+    given-names: "Valentin"
+repository-code: "https://github.com/vboussot/SlicerImpactDoseAcc"
+url: "https://github.com/vboussot/SlicerImpactDoseAcc"
+license: "Apache-2.0"
+preferred-citation:
+  type: article
+  title: "An Uncertainty Estimation Framework for Dose Accumulation in Adaptive Radiotherapy: Application to CBCT-Guided Radiotherapy for Cervical Cancer"
+  authors:
+    - family-names: "Hémon"
+      given-names: "Cédric"
+    - family-names: "Lebret"
+      given-names: "Delphine"
+    - family-names: "Nunès"
+      given-names: "Jean-Claude"
+    - family-names: "Boussot"
+      given-names: "Valentin"
+    - family-names: "Peignaux"
+      given-names: "Karine"
+    - family-names: "Mesgouez-Nebout"
+      given-names: "Nathalie"
+    - family-names: "Hanzen"
+      given-names: "Chantal"
+    - family-names: "Simon"
+      given-names: "Antoine"
+    - family-names: "Barateau"
+      given-names: "Anaïs"
+    - family-names: "de Crevoisier"
+      given-names: "Renaud"
+    - family-names: "Lafond"
+      given-names: "Caroline"
+  journal: "arXiv"
+  year: 2026
+  doi: "10.48550/arXiv.2606.11012"
+  url: "https://arxiv.org/abs/2606.11012"
